@@ -1,15 +1,17 @@
 import telebot
-import requests
-import json
 from dotenv import load_dotenv
 import os
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+import time
+
 load_dotenv()
 myToken = os.getenv('myToken')
 bot = telebot.TeleBot(myToken)
 
-global messageId,book,sentBooks,finish_msg
+global messageId,book,sentBooks,finish_msg,againMsgId
+
+againMsgId = None
 
 #  Путь к JSON-файлу с учетными данными клиента
 credentials_file = 'myKey.json'
@@ -24,35 +26,31 @@ if os.path.exists(credentials_file):
 # Создание объекта API
 service = build('drive', 'v3', credentials=creds)
 
-#todo ID папки, которую вы хотите просмотреть  // Закинуть в .env
-folder_id = '1wbacSg6NrZBJlVVuELDQXngCpSSkWNO1'
+# ID папки, которую вы хотите просмотреть
+folder_id = os.getenv('folder_id')
 
-# # Выполнение запроса для списка файлов и папок в данной папке
-# results = service.files().list(q=f"'{folder_id}' in parents", fields="files(id, name)").execute()
-# files = results.get('files', [])
-
-# # if not files:
-# #   print(f"В данной папке нет файлов и папок.")
-# # else:
-# #   print(f"Содержимое папки (ID: {folder_id}):")
-# #   for file in files:
-# #     file_id = file['id']
-# #     file_name = file['name']
-# #     file_link = f"https://docs.google.com/document/d/{file_id}"
-# #     # print(f"Имя файла: {file_name}\nСсылка: {file_link}")
-
-# !Работа бота ----------------------------------------------------------------------------------------------------------------
+# !Работа бота ---------------------------------------------------------------------------------------------------------------->>>
 @bot.message_handler(commands=['start'])
 def start(message):
-  global messageId
+  global messageId,againMsgId
   messageId = bot.send_message(message.chat.id,'Пришлите название книги')
   bot.delete_message(message.chat.id, message.id)
+  if againMsgId is not None:
+    bot.delete_message(againMsgId.chat.id, againMsgId.message_id)
 
 @bot.message_handler()
 def send_book(message):
-  global messageId,book,sentBooks,finish_msg
+  global messageId,book,sentBooks,finish_msg,againMsgId
   book = message.text.strip()
 
+  if len(book) <= 3:
+    againMsgId = bot.send_message(message.chat.id,'Слишком короткий запрос\nВведите больше 3 символов')
+    bot.delete_message(messageId.chat.id, messageId.message_id)
+    time.sleep(2)
+    start(message)
+    return
+
+  # Выполнение запроса для списка файлов и папок в данной папке
   results = service.files().list(q=f"'{folder_id}' in parents", fields="files(id, name)").execute()
   files = results.get('files', [])
 
@@ -61,24 +59,24 @@ def send_book(message):
     file_id = file['id']
     file_name = file['name']
     file_link = f"https://docs.google.com/document/d/{file_id}"
-
-    if book in file_name:
+    # Создание массива с ссылками совпавшими с поиском
+    if book.lower() in file_name.lower():
         if file_link not in finalArr:
           finalArr.append(file_link)
-        
+  # Создание массива отправленных ссылок для дальнейшего удаления  
   sentBooks = []
   for link in finalArr:
     sentBooks.append(bot.send_message(message.chat.id, f'Книга по запросу "{book}" : \n{file_name}\n {link}',disable_web_page_preview=True))
   
   bot.delete_message(messageId.chat.id, messageId.message_id)
   bot.delete_message(message.chat.id, message.id)
-
+  # Создание кнопки и сохранения id для дальнейшего удаления
   markup = telebot.types.InlineKeyboardMarkup()
   item = telebot.types.InlineKeyboardButton("Искать еще", callback_data='start_search')
   markup.add(item)
   finish_msg = bot.send_message(message.chat.id, 'Поиск завершен', reply_markup=markup)  
 
-
+# Коллбэк для удаления и запуска /старта
 @bot.callback_query_handler(func=lambda call: call.data == 'start_search')
 def callback_start_search(call):
     global sentBooks,finish_msg
