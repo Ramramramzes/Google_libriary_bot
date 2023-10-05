@@ -63,18 +63,27 @@ def send_book(message):
     if book.lower() in file_name.lower():
         if file_link not in finalArr:
           finalArr.append(file_link)
-  # Создание массива отправленных ссылок для дальнейшего удаления  
-  sentBooks = []
-  for link in finalArr:
-    sentBooks.append(bot.send_message(message.chat.id, f'Книга по запросу "{book}" : \n{file_name}\n {link}',disable_web_page_preview=True))
-  
-  bot.delete_message(messageId.chat.id, messageId.message_id)
-  bot.delete_message(message.chat.id, message.id)
-  # Создание кнопки и сохранения id для дальнейшего удаления
-  markup = telebot.types.InlineKeyboardMarkup()
-  item = telebot.types.InlineKeyboardButton("Искать еще", callback_data='start_search')
-  markup.add(item)
-  finish_msg = bot.send_message(message.chat.id, 'Поиск завершен', reply_markup=markup)  
+  if len(finalArr) != 0:
+    # Создание массива отправленных ссылок для дальнейшего удаления  
+    sentBooks = []
+    for link in finalArr:
+      sentBooks.append(bot.send_message(message.chat.id, f'Книга по запросу "{book}" : \n{file_name}\n {link}',disable_web_page_preview=True))
+    
+    bot.delete_message(messageId.chat.id, messageId.message_id)
+    bot.delete_message(message.chat.id, message.id)
+    # Создание кнопки и сохранения id для дальнейшего удаления
+    markup = telebot.types.InlineKeyboardMarkup()
+    item = telebot.types.InlineKeyboardButton("Искать еще", callback_data='start_search')
+    markup.add(item)
+    finish_msg = bot.send_message(message.chat.id, 'Поиск завершен', reply_markup=markup)
+  else:
+    markup = telebot.types.InlineKeyboardMarkup()
+    item = telebot.types.InlineKeyboardButton("Искать еще", callback_data='again')
+    markup.add(item)
+    finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено', reply_markup=markup)
+    bot.delete_message(messageId.chat.id, messageId.message_id)
+    bot.delete_message(message.chat.id, message.id)
+
 
 # Коллбэк для удаления и запуска /старта
 @bot.callback_query_handler(func=lambda call: call.data == 'start_search')
@@ -86,6 +95,8 @@ def callback_start_search(call):
     start(call.message)
     bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
 
-
+@bot.callback_query_handler(func=lambda call: call.data == 'again')
+def again(call):
+  start(call.message)
 
 bot.polling(none_stop=True)
