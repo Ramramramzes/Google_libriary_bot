@@ -1,16 +1,16 @@
 import telebot
-from dotenv import load_dotenv
 import os
+import time
+from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-import time
 
 load_dotenv()
 myToken = os.getenv('myToken')
 bot = telebot.TeleBot(myToken)
 
-global messageId,book,sentBooks,finish_msg,againMsgId
-
+global messageId,book,sentBooks,finish_msg,againMsgId,ignoreFlag
+ignoreFlag = False
 againMsgId = None
 
 #  Путь к JSON-файлу с учетными данными клиента
@@ -32,7 +32,8 @@ folder_id = os.getenv('folder_id')
 # !Работа бота ---------------------------------------------------------------------------------------------------------------->>>
 @bot.message_handler(commands=['start'])
 def start(message):
-  global messageId,againMsgId
+  global messageId,againMsgId,ignoreFlag
+  ignoreFlag = False
   messageId = bot.send_message(message.chat.id,'Пришлите название книги')
   bot.delete_message(message.chat.id, message.id)
   if againMsgId is not None:
@@ -40,7 +41,11 @@ def start(message):
 
 @bot.message_handler()
 def send_book(message):
-  global messageId,book,sentBooks,finish_msg,againMsgId
+  global messageId,book,sentBooks,finish_msg,againMsgId,ignoreFlag
+
+  if ignoreFlag:
+    bot.delete_message(message.chat.id, message.id)
+    return
   book = message.text.strip()
 
   if len(book) <= 3:
@@ -55,6 +60,7 @@ def send_book(message):
   files = results.get('files', [])
 
   finalArr = []
+  nameArr = []
   for file in files:
     file_id = file['id']
     file_name = file['name']
@@ -63,11 +69,14 @@ def send_book(message):
     if book.lower() in file_name.lower():
         if file_link not in finalArr:
           finalArr.append(file_link)
+          nameArr.append(file_name)
   if len(finalArr) != 0:
     # Создание массива отправленных ссылок для дальнейшего удаления  
     sentBooks = []
+    inc = 0
     for link in finalArr:
-      sentBooks.append(bot.send_message(message.chat.id, f'Книга по запросу "{book}" : \n{file_name}\n {link}',disable_web_page_preview=True))
+      sentBooks.append(bot.send_message(message.chat.id, f'Похожие на {book} ссылки : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
+      inc+=1
     
     bot.delete_message(messageId.chat.id, messageId.message_id)
     bot.delete_message(message.chat.id, message.id)
@@ -76,6 +85,7 @@ def send_book(message):
     item = telebot.types.InlineKeyboardButton("Искать еще", callback_data='start_search')
     markup.add(item)
     finish_msg = bot.send_message(message.chat.id, 'Поиск завершен', reply_markup=markup)
+    ignoreFlag = True
   else:
     markup = telebot.types.InlineKeyboardMarkup()
     item = telebot.types.InlineKeyboardButton("Искать еще", callback_data='again')
@@ -83,20 +93,24 @@ def send_book(message):
     finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено', reply_markup=markup)
     bot.delete_message(messageId.chat.id, messageId.message_id)
     bot.delete_message(message.chat.id, message.id)
+    ignoreFlag = True
 
 
 # Коллбэк для удаления и запуска /старта
 @bot.callback_query_handler(func=lambda call: call.data == 'start_search')
 def callback_start_search(call):
-    global sentBooks,finish_msg
-    for message_obj in sentBooks:
-      bot.delete_message(call.message.chat.id, message_obj.message_id)
+  global sentBooks,finish_msg,ignoreFlag
+  for message_obj in sentBooks:
+    bot.delete_message(call.message.chat.id, message_obj.message_id)
     
-    start(call.message)
-    bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+  start(call.message)
+  bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'again')
 def again(call):
+  global ignoreFlag
   start(call.message)
+  # Устанавливаем клавиатуру в значение None для сообщения "Ничего не найдено"
+  bot.send_message(chat_id=finish_msg.chat.id, message_id=finish_msg.message_id, reply_markup=None)
 
 bot.polling(none_stop=True)
