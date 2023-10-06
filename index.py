@@ -9,9 +9,11 @@ load_dotenv()
 myToken = os.getenv('myToken')
 bot = telebot.TeleBot(myToken)
 
-global messageId,book,sentBooks,finish_msg,againMsgId,ignoreFlag
+global messageId,book,sentBooks,finish_msg,againMsgId,ignoreFlag,startFlag
 ignoreFlag = False
 againMsgId = None
+messageId = None
+
 
 #  Путь к JSON-файлу с учетными данными клиента
 credentials_file = 'myKey.json'
@@ -48,10 +50,10 @@ def send_book(message):
     return
   book = message.text.strip()
 
-  if len(book) <= 3:
-    againMsgId = bot.send_message(message.chat.id,'Слишком короткий запрос\nВведите больше 3 символов')
+  if len(book) <= 2:
+    againMsgId = bot.send_message(message.chat.id,'Слишком короткий запрос')
     bot.delete_message(messageId.chat.id, messageId.message_id)
-    time.sleep(2)
+    time.sleep(1.5)
     start(message)
     return
 
@@ -108,9 +110,7 @@ def callback_start_search(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == 'again')
 def again(call):
-  global ignoreFlag
+  global ignoreFlag,finish_msg
   start(call.message)
-  # Устанавливаем клавиатуру в значение None для сообщения "Ничего не найдено"
-  bot.send_message(chat_id=finish_msg.chat.id, message_id=finish_msg.message_id, reply_markup=None)
 
 bot.polling(none_stop=True)
