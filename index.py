@@ -9,11 +9,7 @@ load_dotenv()
 myToken = os.getenv('myToken')
 bot = telebot.TeleBot(myToken)
 
-global messageId,book,sentBooks,finish_msg,againMsgId,ignoreFlag,startFlag,callFlag
-ignoreFlag = False
-againMsgId = None
-messageId = None
-callFlag = True
+global messageId,hello,ignoreFlag,started,message_obj,finish_msg,shortResp,goodResp
 
 channel_id = os.getenv('channel_id')
 
@@ -33,40 +29,66 @@ service = build('drive', 'v3', credentials=creds)
 # ID папки, которую вы хотите просмотреть
 folder_id = os.getenv('folder_id')
 
+shortResp = False
+goodResp = False
+
 # !Работа бота ---------------------------------------------------------------------------------------------------------------->>>
 @bot.message_handler(commands=['start'])
 def start(message):
-  global messageId,againMsgId,ignoreFlag,callFlag
+  global hello,ignoreFlag,started
+  started = False
   if check_subscription(message.from_user.id, channel_id):
-    if callFlag is False:
-      callFlag = True
-      bot.delete_message(againMsgId.chat.id, againMsgId.message_id)  
-    ignoreFlag = False
-    messageId = bot.send_message(message.chat.id,'Пришлите название книги')
+    ignoreFlag = True
+    markup = telebot.types.InlineKeyboardMarkup()
+    item = telebot.types.InlineKeyboardButton("Начать", callback_data='main')
+    markup.add(item)
+    hello = bot.send_message(message.chat.id,'Добро пожаловать в нашу библиотеку',reply_markup=markup)
+
     bot.delete_message(message.chat.id, message.id)
   else:
-    if check_subscription(message.from_user.id, channel_id):
-      start(message)
-    else:
-      bot.send_message(message.chat.id, 'Reg')
+    ignoreFlag = True
+    hello = bot.send_message(message.chat.id,'Добро пожаловать в нашу библиотеку\nЗарегайтесь')
+    return
+
+@bot.callback_query_handler(func=lambda call: call.data == 'main')
+def main(call):
+  global messageId,hello,ignoreFlag,started,againMsgId,message_obj,finish_msg,finalArr,shortResp,goodResp
+  if check_subscription(call.message.from_user.id, channel_id):
+    messageId = bot.send_message(call.message.chat.id,'Пришлите название книги')
+    if ignoreFlag == True and shortResp == True:
+      bot.delete_message(againMsgId.chat.id, againMsgId.message_id)
+    if ignoreFlag == True and goodResp == True:
+      bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+    ignoreFlag = False
+    if started == False:
+      bot.delete_message(hello.chat.id,hello.id)
+    
+  else:
+    ignoreFlag = True
+    bot.send_message(call.message.chat.id, 'Reg')
 
 
 @bot.message_handler()
 def send_book(message):
-  global messageId,book,sentBooks,finish_msg,againMsgId,ignoreFlag,callFlag
-
+  global messageId,book,message_obj,sentBooks,finish_msg,againMsgId,ignoreFlag,shortResp,goodResp
   if check_subscription(message.from_user.id, channel_id):
-    if ignoreFlag:
+    if ignoreFlag != False:
       bot.delete_message(message.chat.id, message.id)
       return
+    
     book = message.text.strip()
 
     if len(book) <= 2:
-      againMsgId = bot.send_message(message.chat.id,'Слишком короткий запрос')
-      callFlag = False
+      
+      ignoreFlag = True
+      markup = telebot.types.InlineKeyboardMarkup()
+      item = telebot.types.InlineKeyboardButton("еще раз", callback_data='main')
+      markup.add(item)
+      shortResp = True
+      goodResp = False
+      bot.delete_message(message.chat.id, message.message_id)
+      againMsgId = bot.send_message(message.chat.id,'Слишком короткий запрос',reply_markup=markup)
       bot.delete_message(messageId.chat.id, messageId.message_id)
-      time.sleep(1.5)
-      start(message)
       return
 
     # Выполнение запроса для списка файлов и папок в данной папке
@@ -86,6 +108,7 @@ def send_book(message):
             nameArr.append(file_name)
     if len(finalArr) != 0:
       # Создание массива отправленных ссылок для дальнейшего удаления  
+      ignoreFlag = True
       sentBooks = []
       inc = 0
       for link in finalArr:
@@ -96,40 +119,46 @@ def send_book(message):
       bot.delete_message(message.chat.id, message.id)
       # Создание кнопки и сохранения id для дальнейшего удаления
       markup = telebot.types.InlineKeyboardMarkup()
-      item = telebot.types.InlineKeyboardButton("Искать еще", callback_data='start_search')
+      item = telebot.types.InlineKeyboardButton("искать еще", callback_data='clear')
       markup.add(item)
+      goodResp = True
+      shortResp = False
       finish_msg = bot.send_message(message.chat.id, 'Поиск завершен', reply_markup=markup)
-      ignoreFlag = True
+      
     else:
+      ignoreFlag = True
       markup = telebot.types.InlineKeyboardMarkup()
-      item = telebot.types.InlineKeyboardButton("Искать еще", callback_data='again')
+      item = telebot.types.InlineKeyboardButton("искать еще", callback_data='main')
       markup.add(item)
       finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено', reply_markup=markup)
       bot.delete_message(messageId.chat.id, messageId.message_id)
       bot.delete_message(message.chat.id, message.id)
-      ignoreFlag = True
   else:
     bot.send_message(message.chat.id, 'Reg')
 
-# Коллбэк для удаления и запуска /старта
-@bot.callback_query_handler(func=lambda call: call.data == 'start_search')
-def callback_start_search(call):
-  global sentBooks,finish_msg,ignoreFlag,callFlag
-  callFlag = True
-  if check_subscription(call.message.from_user.id, channel_id):
-    for message_obj in sentBooks:
-      bot.delete_message(call.message.chat.id, message_obj.message_id)
+@bot.callback_query_handler(func=lambda call: call.data == 'clear')
+def clear(call):
+  global message_obj,send_books,finish_msg
+  for message_obj in sentBooks:
+    bot.delete_message(call.message.chat.id, message_obj.message_id)
+  main(call)
+# # Коллбэк для удаления и запуска /старта
+# @bot.callback_query_handler(func=lambda call: call.data == 'start_search')
+# def callback_start_search(call):
+#   global sentBooks,finish_msg,ignoreFlag
+#   if check_subscription(call.message.from_user.id, channel_id):
+#     for message_obj in sentBooks:
+#       bot.delete_message(call.message.chat.id, message_obj.message_id)
       
-    start(call.message)
-    bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
-  else:
-    bot.send_message(call.message.chat.id, 'Reg')
+#     start(call.message)
+#     bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+#   else:
+#     bot.send_message(call.message.chat.id, 'Reg')
 
-@bot.callback_query_handler(func=lambda call: call.data == 'again')
-def again(call):
-  global ignoreFlag,finish_msg,callFlag
-  callFlag = True
-  start(call.message)
+# @bot.callback_query_handler(func=lambda call: call.data == 'again')
+# def again(call):
+#   global ignoreFlag,finish_msg
+#   start(call.message)
 
 def check_subscription(user_id, channel_id):
     try:
