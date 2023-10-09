@@ -9,7 +9,7 @@ load_dotenv()
 myToken = os.getenv('myToken')
 bot = telebot.TeleBot(myToken)
 
-global messageId,hello,ignoreFlag,started,message_obj,finish_msg,shortResp,goodResp,noneFlag
+global messageId,hello,ignoreFlag,started,message_obj,finish_msg,shortResp,goodResp,noneFlag,checkSub
 
 channel_id = os.getenv('channel_id')
 
@@ -29,12 +29,12 @@ service = build('drive', 'v3', credentials=creds)
 # ID папки, которую вы хотите просмотреть
 folder_id = os.getenv('folder_id')
 
-shortResp,goodResp,noneFlag= False,False,False
+shortResp,goodResp,noneFlag,checkSub = False,False,False,False
 
 # !Работа бота ---------------------------------------------------------------------------------------------------------------->>>
 @bot.message_handler(commands=['start'])
 def start(message):
-  global hello,ignoreFlag,started
+  global hello,ignoreFlag,started,helloFlag
   started = False
   if check_subscription(message.from_user.id, channel_id):
     ignoreFlag = True
@@ -42,40 +42,64 @@ def start(message):
     item = telebot.types.InlineKeyboardButton("Начать", callback_data='main')
     markup.add(item)
     hello = bot.send_message(message.chat.id,'Добро пожаловать в нашу библиотеку',reply_markup=markup)
+    helloFlag = True
 
     bot.delete_message(message.chat.id, message.id)
   else:
     ignoreFlag = True
-    hello = bot.send_message(message.chat.id,'Добро пожаловать в нашу библиотеку\nЗарегайтесь')
-    return
+    markup = telebot.types.InlineKeyboardMarkup()
+    item = telebot.types.InlineKeyboardButton("Подписался", callback_data='main')
+    markup.add(item)
+    hello = bot.send_message(message.chat.id,'Подпишитесь чтобы продолжить\nhttps://t.me/omfsrus',reply_markup=markup)
+    bot.delete_message(message.chat.id, message.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'main')
 def main(call):
-  global messageId,hello,ignoreFlag,started,againMsgId,message_obj,finish_msg,finalArr,shortResp,goodResp,noneFlag
-  if check_subscription(call.message.from_user.id, channel_id):
+  global messageId,hello,ignoreFlag,started,againMsgId,message_obj,finish_msg,finalArr,shortResp,goodResp,noneFlag,checkSub,helloFlag
+
+  if check_subscription(call.message.chat.id, channel_id):
     messageId = bot.send_message(call.message.chat.id,'Пришлите название книги')
     if ignoreFlag == True and shortResp == True:
       ignoreFlag = False
       bot.delete_message(againMsgId.chat.id, againMsgId.message_id)
+      if helloFlag == True:
+        try:
+          bot.delete_message(hello.chat.id,hello.id)
+        except:
+          pass
     if ignoreFlag == True and goodResp == True:
       ignoreFlag = False
       bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+      if helloFlag == True:
+        try:
+          bot.delete_message(hello.chat.id,hello.id)
+        except:
+          pass
     if ignoreFlag == True and noneFlag == True:
       ignoreFlag = False
       bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+      if helloFlag == True:
+        try:
+          bot.delete_message(hello.chat.id,hello.id)
+        except:
+          pass
     ignoreFlag = False
 
     if started == False:
       bot.delete_message(hello.chat.id,hello.id)
-    
   else:
     ignoreFlag = True
-    bot.send_message(call.message.chat.id, 'Reg')
+    markup = telebot.types.InlineKeyboardMarkup()
+    item = telebot.types.InlineKeyboardButton("Подписался", callback_data='main')
+    markup.add(item)
+    hello = bot.send_message(call.message.chat.id,'Подпишитесь чтобы продолжить\nhttps://t.me/omfsrus',reply_markup=markup)
+    bot.delete_message(call.message.chat.id, call.message.id)
+    helloFlag = True
 
 
 @bot.message_handler()
 def send_book(message):
-  global messageId,book,message_obj,sentBooks,finish_msg,againMsgId,ignoreFlag,shortResp,goodResp,noneFlag
+  global messageId,book,message_obj,sentBooks,finish_msg,againMsgId,ignoreFlag,shortResp,goodResp,noneFlag,hello,helloFlag
   if check_subscription(message.from_user.id, channel_id):
     if ignoreFlag != False:
       bot.delete_message(message.chat.id, message.id)
@@ -144,7 +168,13 @@ def send_book(message):
       bot.delete_message(message.chat.id, message.id)
       return
   else:
-    bot.send_message(message.chat.id, 'Reg')
+    ignoreFlag = True
+    markup = telebot.types.InlineKeyboardMarkup()
+    item = telebot.types.InlineKeyboardButton("Подписался", callback_data='main')
+    markup.add(item)
+    hello = bot.send_message(message.chat.id,'Подпишитесь чтобы продолжить\nhttps://t.me/omfsrus',reply_markup=markup)
+    bot.delete_message(message.chat.id, message.id)
+    helloFlag = True
 
 @bot.callback_query_handler(func=lambda call: call.data == 'clear')
 def clear(call):
@@ -156,16 +186,17 @@ def clear(call):
   main(call)
 
 def check_subscription(user_id, channel_id):
-    try:
-        chat_member = bot.get_chat_member(chat_id=int(channel_id), user_id=int(user_id))
-        if chat_member.status in ["member", "administrator", "creator"]:
-          # Пользователь подписан на канал
-          return True  
-        else:
-          # Пользователь не подписан на канал
-          return False  
-    except Exception as e:
-        # Ошибка при проверке подписки
-        return False  
+    global checkSub
+    chat_member = bot.get_chat_member(chat_id=int(channel_id), user_id=int(user_id))
+    if chat_member.status in ["member","administrator","creator"]:
+      # Пользователь подписан на канал
+      checkSub = True
+      print('200')
+      return True  
+    elif chat_member.status not in ["member"]:
+      checkSub = False
+      print('400')
+      # Пользователь не подписан на канал
+      return False  
 
 bot.polling(none_stop=True)
