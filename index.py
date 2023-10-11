@@ -9,7 +9,7 @@ load_dotenv()
 myToken = os.getenv('myToken')
 bot = telebot.TeleBot(myToken)
 
-global channel_id,reg,warning_msg,descripsion_mode,ignoreFlag,send_book_msg,begin_msg,book_name,again_msg
+global channel_id,reg,warning_msg,descripsion_mode,ignoreFlag,send_book_msg,begin_msg,book_name,again_msg,finish_msg,sentBooks,message_obj
 
 book_name = ""
 channel_id = os.getenv('channel_id')
@@ -53,7 +53,7 @@ def start(message):
 # !----------------------------------------------------------------------------MESSAGE
 @bot.message_handler()
 def send_book(message):
-  global ignoreFlag,book_name,again_msg,send_book_msg
+  global ignoreFlag,book_name,again_msg,send_book_msg,finish_msg,sentBooks,message_obj
   user_id = message.from_user.id
   if ignoreFlag is not False:
       bot.delete_message(message.chat.id, message.id)
@@ -70,13 +70,55 @@ def send_book(message):
 
 
     if len(book_name) <= 2:
-        markup = telebot.types.InlineKeyboardMarkup()
-        item = telebot.types.InlineKeyboardButton("еще раз", callback_data='short')
-        markup.add(item)
-        bot.delete_message(message.chat.id, message.id)
-        again_msg = bot.send_message(message.chat.id,'Слишком короткий запрос',reply_markup=markup)
-        ignoreFlag = True
-        return
+      markup = telebot.types.InlineKeyboardMarkup()
+      item = telebot.types.InlineKeyboardButton("еще раз", callback_data='short')
+      markup.add(item)
+      bot.delete_message(message.chat.id, message.id)
+      again_msg = bot.send_message(message.chat.id,'Слишком короткий запрос',reply_markup=markup)
+      ignoreFlag = True
+      return
+    
+    #! Выполнение запроса для списка файлов и папок в данной папке
+    results = service.files().list(q=f"'{folder_id}' in parents", fields="files(id, name)").execute()
+    files = results.get('files', [])
+
+    finalArr = []
+    nameArr = []
+    for file in files:
+      file_id = file['id']
+      file_name = file['name']
+      file_link = f"https://docs.google.com/document/d/{file_id}"
+      # Создание массива с ссылками совпавшими с поиском
+      if book_name.lower() in file_name.lower():
+          if file_link not in finalArr:
+            finalArr.append(file_link)
+            nameArr.append(file_name)
+    if len(finalArr) != 0:
+      # Создание массива отправленных ссылок для дальнейшего удаления  
+      ignoreFlag = True
+      sentBooks = []
+      inc = 0
+      for link in finalArr:
+        sentBooks.append(bot.send_message(message.chat.id, f'Похожие на {book_name} ссылки : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
+        inc+=1
+      
+      # Создание кнопки и сохранения id для дальнейшего удаления
+      # Удаляем сообщение пользователя
+      bot.delete_message(message.chat.id, message.id)
+      markup = telebot.types.InlineKeyboardMarkup()
+      item = telebot.types.InlineKeyboardButton("искать еще", callback_data='clear')
+      markup.add(item)
+      
+      finish_msg = bot.send_message(message.chat.id, 'Поиск завершен', reply_markup=markup)
+    else:
+      ignoreFlag = True
+      markup = telebot.types.InlineKeyboardMarkup()
+      item = telebot.types.InlineKeyboardButton("искать еще", callback_data='main')
+      markup.add(item)
+
+      bot.delete_message(message.chat.id, message.id)
+      finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено', reply_markup=markup)
+      return
   else:
     bot.delete_message(message.chat.id, message.id)
     check_subscription_mess(user_id, channel_id,message)
@@ -85,14 +127,18 @@ def send_book(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == 'main')
 def main(call):
-  global channel_id,reg,descripsion_mode,ignoreFlag,begin_msg,again_msg,send_book_msg,book_name
+  global channel_id,reg,descripsion_mode,ignoreFlag,begin_msg,again_msg,send_book_msg,book_name,finish_msg
   user_id = call.from_user.id
-  
+
   if descripsion_mode is False:
 # !----------------------------------------------------------------------------ПОДПИСКИ_НЕТ
     bot.answer_callback_query(call.id, 'Проверяем⌛', show_alert=True)
     try:
       bot.delete_message(reg.chat.id, reg.message_id)
+    except:
+      pass
+    try:
+      bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
     except:
       pass
     check_subscription_call(user_id,channel_id,call)
@@ -104,6 +150,10 @@ def main(call):
       pass
     try:
       bot.delete_message(begin_msg.chat.id, begin_msg.message_id)
+    except:
+      pass
+    try:
+      bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
     except:
       pass
 
@@ -204,5 +254,14 @@ def short_book_name(call):
     except:
       pass
 
+@bot.callback_query_handler(func=lambda call: call.data == 'clear')
+def clear(call):
+  global message_obj,send_books,finish_msg,noneFlag
+  for message_obj in sentBooks:
+    bot.delete_message(call.message.chat.id, message_obj.message_id)
+  bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+  noneFlag = False
+
+  main(call)
 
 bot.polling(none_stop=True)
