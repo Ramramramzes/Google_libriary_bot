@@ -73,7 +73,7 @@ def send_book(message):
       item = telebot.types.InlineKeyboardButton("еще раз", callback_data='short')
       markup.add(item)
       bot.delete_message(message.chat.id, message.id)
-      again_msg = bot.send_message(message.chat.id,'Слишком короткий запрос',reply_markup=markup)
+      again_msg = bot.send_message(message.chat.id,'Слишком короткий запрос 🤏',reply_markup=markup)
       ignoreFlag = True
       return
     
@@ -86,7 +86,7 @@ def send_book(message):
     for file in files:
       file_id = file['id']
       file_name = file['name']
-      file_link = f"https://docs.google.com/document/d/{file_id}"
+      file_link = f"https://docs.google.com/file/d/{file_id}"
       # Создание массива с ссылками совпавшими с поиском
       if book_name.lower() in file_name.lower():
           if file_link not in finalArr:
@@ -98,25 +98,25 @@ def send_book(message):
       sentBooks = []
       inc = 0
       for link in finalArr:
-        sentBooks.append(bot.send_message(message.chat.id, f'Похожие на {book_name} ссылки : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
+        sentBooks.append(bot.send_message(message.chat.id, f'Похожие на {book_name} книги 📖 : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
         inc+=1
       
       # Создание кнопки и сохранения id для дальнейшего удаления
       # Удаляем сообщение пользователя
       bot.delete_message(message.chat.id, message.id)
       markup = telebot.types.InlineKeyboardMarkup()
-      item = telebot.types.InlineKeyboardButton("искать еще", callback_data='clear')
+      item = telebot.types.InlineKeyboardButton("Искать 🔎", callback_data='clear')
       markup.add(item)
       
-      finish_msg = bot.send_message(message.chat.id, 'Поиск завершен', reply_markup=markup)
+      finish_msg = bot.send_message(message.chat.id, 'Поиск завершен ✅', reply_markup=markup)
     else:
       ignoreFlag = True
       markup = telebot.types.InlineKeyboardMarkup()
-      item = telebot.types.InlineKeyboardButton("искать еще", callback_data='main')
+      item = telebot.types.InlineKeyboardButton("Искать 🔎", callback_data='main')
       markup.add(item)
 
       bot.delete_message(message.chat.id, message.id)
-      finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено', reply_markup=markup)
+      finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено ❌', reply_markup=markup)
       return
   else:
     bot.delete_message(message.chat.id, message.id)
@@ -127,15 +127,13 @@ def main(call):
   global channel_id,reg,descripsion_mode,ignoreFlag,begin_msg,again_msg,send_book_msg,book_name,finish_msg
   user_id = call.from_user.id
   if user_id in last_button_click and time.time() - last_button_click[user_id] < 3 and descripsion_mode is not True:
-    bot.answer_callback_query(call.id, 'Вы уже нажали кнопку', show_alert=True)
-    print('tyt1')
+    bot.answer_callback_query(call.id, 'Вы уже нажали кнопку 😡', show_alert=True)
   else:
-    print('tyt2')
     last_button_click[user_id] = time.time()
     print(descripsion_mode)
     if descripsion_mode is False:
   # !----------------------------------------------------------------------------ПОДПИСКИ_НЕТ
-      bot.answer_callback_query(call.id, 'Проверяем⌛', show_alert=True)
+      bot.answer_callback_query(call.id, 'Проверяем ⌛', show_alert=True)
       try:
         bot.delete_message(reg.chat.id, reg.message_id)
       except:
@@ -160,7 +158,7 @@ def main(call):
       except:
         pass
 
-      send_book_msg = bot.send_message(call.message.chat.id,'Пришлите название книги')
+      send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
       ignoreFlag = False
 
       try:
@@ -179,13 +177,13 @@ def check_subscription_mess(user_id, channel_id,message):
   elif chat_member.status not in ["member"]:
     descripsion_mode = False
     markup = telebot.types.InlineKeyboardMarkup()
-    item = telebot.types.InlineKeyboardButton("Подписался", callback_data='main')
+    item = telebot.types.InlineKeyboardButton("Подписался ✅", callback_data='main')
     markup.add(item)
     try:
       bot.delete_message(send_book_msg.chat.id, send_book_msg.message_id)
     except:
       pass
-    reg = bot.send_message(message.chat.id,'Подпишитесь чтобы продолжить\nhttps://t.me/omfsrus',reply_markup=markup)
+    reg = bot.send_message(message.chat.id,'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus',reply_markup=markup)
     ignoreFlag = True
     print('400')
     # Пользователь не подписан на канал
@@ -197,7 +195,6 @@ def check_subscription_call(user_id, channel_id,call):
   if chat_member.status in ["member","administrator","creator"]:
     # Пользователь подписан на канал
     print('200')
-    print('tyt')
     descripsion_mode = True
     main(call)
     return True  
@@ -210,7 +207,7 @@ def check_subscription_call(user_id, channel_id,call):
     markup = telebot.types.InlineKeyboardMarkup()
     item = telebot.types.InlineKeyboardButton("Подписался", callback_data='main')
     markup.add(item)
-    reg = bot.send_message(call.message.chat.id,'Подпишитесь чтобы продолжить\nhttps://t.me/omfsrus',reply_markup=markup)
+    reg = bot.send_message(call.message.chat.id,'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus',reply_markup=markup)
     ignoreFlag = True
     print('400')
     # Пользователь не подписан на канал
@@ -234,7 +231,7 @@ def short_book_name(call):
   if descripsion_mode is True:
     print('Short Подписка есть - ',descripsion_mode)
     bot.delete_message(again_msg.chat.id, again_msg.message_id)
-    send_book_msg = bot.send_message(call.message.chat.id,'Пришлите название книги')
+    send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
     ignoreFlag = False
   else:
     print('Short Подписки нет - ',descripsion_mode)
@@ -255,3 +252,7 @@ def clear(call):
   main(call)
 
 bot.polling(none_stop=True)
+
+
+'https://docs.google.com/document/d/13zjSKclmJ7IUQO4EX3Pq41Nk9z62oU6K/view?usp=share_link'
+'https://drive.google.com/file/d/13zjSKclmJ7IUQO4EX3Pq41Nk9z62oU6K/view'
