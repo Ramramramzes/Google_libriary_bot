@@ -9,9 +9,11 @@ load_dotenv()
 myToken = os.getenv('myToken')
 bot = telebot.TeleBot(myToken)
 
-global channel_id,reg,warning_msg,descripsion_mode,ignoreFlag,send_book_msg,begin_msg,book_name,again_msg,finish_msg,sentBooks,message_obj
+global channel_id,reg,warning_msg,descripsion_mode,ignoreFlag,send_book_msg,begin_msg,book_name,again_msg,finish_msg,sentBooks,message_obj,last_button_click
 
+last_button_click = {}
 book_name = ""
+
 channel_id = os.getenv('channel_id')
 
 #  Путь к JSON-файлу с учетными данными клиента
@@ -46,9 +48,6 @@ def start(message):
     markup.add(item)
     begin_msg = bot.send_message(message.chat.id,'Вы подписаны',reply_markup=markup)
     ignoreFlag = True
-
-
-
 
 # !----------------------------------------------------------------------------MESSAGE
 @bot.message_handler()
@@ -122,62 +121,52 @@ def send_book(message):
   else:
     bot.delete_message(message.chat.id, message.id)
     check_subscription_mess(user_id, channel_id,message)
-
-
-
+# !----------------------------------------------------------------------------CALL_MAIN
 @bot.callback_query_handler(func=lambda call: call.data == 'main')
 def main(call):
   global channel_id,reg,descripsion_mode,ignoreFlag,begin_msg,again_msg,send_book_msg,book_name,finish_msg
   user_id = call.from_user.id
-
-  if descripsion_mode is False:
-# !----------------------------------------------------------------------------ПОДПИСКИ_НЕТ
-    bot.answer_callback_query(call.id, 'Проверяем⌛', show_alert=True)
-    try:
-      bot.delete_message(reg.chat.id, reg.message_id)
-    except:
-      pass
-    try:
-      bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
-    except:
-      pass
-    check_subscription_call(user_id,channel_id,call)
+  if user_id in last_button_click and time.time() - last_button_click[user_id] < 3 and descripsion_mode is not True:
+    bot.answer_callback_query(call.id, 'Вы уже нажали кнопку', show_alert=True)
+    print('tyt1')
   else:
-# !---------------------------------------------------------------------------ПОДПИСКА_ЕСТЬ
-    try:
-      bot.delete_message(again_msg.chat.id, again_msg.message_id)
-    except:
-      pass
-    try:
-      bot.delete_message(begin_msg.chat.id, begin_msg.message_id)
-    except:
-      pass
-    try:
-      bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
-    except:
-      pass
+    print('tyt2')
+    last_button_click[user_id] = time.time()
+    print(descripsion_mode)
+    if descripsion_mode is False:
+  # !----------------------------------------------------------------------------ПОДПИСКИ_НЕТ
+      bot.answer_callback_query(call.id, 'Проверяем⌛', show_alert=True)
+      try:
+        bot.delete_message(reg.chat.id, reg.message_id)
+      except:
+        pass
+      try:
+        bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+      except:
+        pass
+      check_subscription_call(user_id,channel_id,call)
+    else:
+  # !---------------------------------------------------------------------------ПОДПИСКА_ЕСТЬ
+      try:
+        bot.delete_message(again_msg.chat.id, again_msg.message_id)
+      except:
+        pass
+      try:
+        bot.delete_message(begin_msg.chat.id, begin_msg.message_id)
+      except:
+        pass
+      try:
+        bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+      except:
+        pass
 
-    send_book_msg = bot.send_message(call.message.chat.id,'Пришлите название книги')
-    ignoreFlag = False
+      send_book_msg = bot.send_message(call.message.chat.id,'Пришлите название книги')
+      ignoreFlag = False
 
-    try:
-      bot.delete_message(reg.chat.id, reg.message_id)
-    except:
-      pass
-  
-  
-  
-  
-  
-  
-  
-
-
-
-
-
-
-
+      try:
+        bot.delete_message(reg.chat.id, reg.message_id)
+      except:
+        pass
 
 def check_subscription_mess(user_id, channel_id,message):
   global reg,descripsion_mode,ignoreFlag
@@ -201,13 +190,14 @@ def check_subscription_mess(user_id, channel_id,message):
     print('400')
     # Пользователь не подписан на канал
     return False
-  
+
 def check_subscription_call(user_id, channel_id,call):
   global reg,descripsion_mode,ignoreFlag
   chat_member = bot.get_chat_member(chat_id=int(channel_id), user_id=int(user_id))
   if chat_member.status in ["member","administrator","creator"]:
     # Пользователь подписан на канал
     print('200')
+    print('tyt')
     descripsion_mode = True
     main(call)
     return True  
@@ -235,7 +225,7 @@ def check_subscription_call_checker(user_id, channel_id):
   elif chat_member.status not in ["member"]:
     descripsion_mode = False
     return False  
-
+# !----------------------------------------------------------------------------CALL_SHORT
 @bot.callback_query_handler(func=lambda call: call.data == 'short')
 def short_book_name(call):
   global send_book_msg,ignoreFlag,user_id
@@ -253,7 +243,7 @@ def short_book_name(call):
       bot.delete_message(again_msg.chat.id, again_msg.message_id)
     except:
       pass
-
+# !----------------------------------------------------------------------------CALL_CLEAR
 @bot.callback_query_handler(func=lambda call: call.data == 'clear')
 def clear(call):
   global message_obj,send_books,finish_msg,noneFlag
