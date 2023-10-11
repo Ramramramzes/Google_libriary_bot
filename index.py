@@ -36,7 +36,11 @@ folder_id = os.getenv('folder_id')
 def start(message):
   global channel_id,ignoreFlag,send_book_msg,begin_msg
   bot.send_message(message.chat.id,'Библиотека OMFS📚')
-  bot.delete_message(message.chat.id, message.message_id)
+  try:
+    bot.delete_message(message.chat.id, message.message_id)
+  except:
+    pass
+
   user_id = message.from_user.id
   check_subscription_mess(user_id,channel_id,message)
   ignoreFlag = True
@@ -46,7 +50,7 @@ def start(message):
     markup = telebot.types.InlineKeyboardMarkup()
     item = telebot.types.InlineKeyboardButton("Начать поиск", callback_data='main')
     markup.add(item)
-    begin_msg = bot.send_message(message.chat.id,'Вы подписаны',reply_markup=markup)
+    begin_msg = bot.send_message(message.chat.id,'Вы подписаны ✅',reply_markup=markup)
     ignoreFlag = True
 
 # !----------------------------------------------------------------------------MESSAGE
@@ -205,7 +209,7 @@ def check_subscription_call(user_id, channel_id,call):
     except:
       pass
     markup = telebot.types.InlineKeyboardMarkup()
-    item = telebot.types.InlineKeyboardButton("Подписался", callback_data='main')
+    item = telebot.types.InlineKeyboardButton("Подписался ✅", callback_data='main')
     markup.add(item)
     reg = bot.send_message(call.message.chat.id,'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus',reply_markup=markup)
     ignoreFlag = True
@@ -229,12 +233,10 @@ def short_book_name(call):
   
   user_id = call.from_user.id
   if descripsion_mode is True:
-    print('Short Подписка есть - ',descripsion_mode)
     bot.delete_message(again_msg.chat.id, again_msg.message_id)
     send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
     ignoreFlag = False
   else:
-    print('Short Подписки нет - ',descripsion_mode)
     check_subscription_call(user_id,channel_id,call)
     try:
       bot.delete_message(again_msg.chat.id, again_msg.message_id)
@@ -253,6 +255,3 @@ def clear(call):
 
 bot.polling(none_stop=True)
 
-
-'https://docs.google.com/document/d/13zjSKclmJ7IUQO4EX3Pq41Nk9z62oU6K/view?usp=share_link'
-'https://drive.google.com/file/d/13zjSKclmJ7IUQO4EX3Pq41Nk9z62oU6K/view'
