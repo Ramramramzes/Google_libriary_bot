@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import telebot
 import os
 from dotenv import load_dotenv
@@ -82,7 +83,7 @@ def send_book(message):
       return
     
     #! Выполнение запроса для списка файлов и папок в данной папке
-    results = service.files().list(q=f"'{folder_id}' in parents", fields="files(id, name)").execute()
+    results = service.files().list(q=f"'{folder_id}' in parents", fields="files(id, name)",pageSize=1000).execute()
     files = results.get('files', [])
 
     finalArr = []
@@ -102,7 +103,7 @@ def send_book(message):
       sentBooks = []
       inc = 0
       for link in finalArr:
-        sentBooks.append(bot.send_message(message.chat.id, f'Похожие на {book_name} книги 📖 : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
+        sentBooks.append(bot.send_message(message.chat.id, f'Похожие на "{book_name}" книги 📖 : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
         inc+=1
       
       # Создание кнопки и сохранения id для дальнейшего удаления
