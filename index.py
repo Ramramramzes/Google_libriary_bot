@@ -45,15 +45,15 @@ def start(message):
 
   user_id = message.from_user.id
   check_subscription_mess(user_id,channel_id,message)
-  # ignoreFlag = True
   if descripsion_mode is False:
-    bot.delete_message(message.chat.id, message.message_id)
+    try:
+      bot.delete_message(message.chat.id, message.message_id)
+    except:
+      pass
   else:
-    markup = telebot.types.InlineKeyboardMarkup()
-    item = telebot.types.InlineKeyboardButton("Начать поиск", callback_data='main')
-    markup.add(item)
-    begin_msg = bot.send_message(message.chat.id,'Вы подписаны ✅',reply_markup=markup)
-    ignoreFlag = True
+    begin_msg = bot.send_message(message.chat.id,'Вы подписаны ✅')
+    send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
+    ignoreFlag = False
 
 # !----------------------------------------------------------------------------MESSAGE
 @bot.message_handler()
@@ -61,6 +61,10 @@ def send_book(message):
   bot.send_chat_action(message.chat.id, action="typing")
   global ignoreFlag,book_name,again_msg,send_book_msg,finish_msg,sentBooks,message_obj
   user_id = message.from_user.id
+  try:
+    bot.delete_message(begin_msg.chat.id, begin_msg.message_id)
+  except:
+    pass
   try:
     if ignoreFlag is not False:
       bot.delete_message(message.chat.id, message.id)
@@ -86,13 +90,13 @@ def send_book(message):
 
 
     if len(book_name) <= 2:
-      # markup = telebot.types.InlineKeyboardMarkup()
-      # item = telebot.types.InlineKeyboardButton("еще раз", callback_data='short')
-      # markup.add(item)
-      bot.delete_message(message.chat.id, message.id)
+      try:
+        bot.delete_message(message.chat.id, message.id)
+      except:
+        pass
       again_msg = bot.send_message(message.chat.id,'Слишком короткий запрос 🤏')
       send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
-      # ignoreFlag = True
+      ignoreFlag = False
       return
     
     #! Выполнение запроса для списка файлов и папок в данной папке
@@ -131,6 +135,7 @@ def send_book(message):
       bot.delete_message(message.chat.id, message.id)
       finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено ❌')
       send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
+      ignoreFlag = False
   else:
     bot.delete_message(message.chat.id, message.id)
     check_subscription_mess(user_id, channel_id,message)
@@ -169,14 +174,12 @@ def main(call):
         bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
       except:
         pass
-
-      send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
-      ignoreFlag = False
-
       try:
         bot.delete_message(reg.chat.id, reg.message_id)
       except:
         pass
+      send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
+      ignoreFlag = False
 
 def check_subscription_mess(user_id, channel_id,message):
   global reg,descripsion_mode,ignoreFlag
@@ -249,6 +252,7 @@ def short_book_name(call):
 # !----------------------------------------------------------------------------CALL_CLEAR
 @bot.callback_query_handler(func=lambda call: call.data == 'clear')
 def clear(call):
+  bot.answer_callback_query(call.id, 'Чистим 🧹', show_alert=True)
   global message_obj,send_books,finish_msg,noneFlag
   for message_obj in sentBooks:
     bot.delete_message(call.message.chat.id, message_obj.message_id)
