@@ -58,6 +58,7 @@ def start(message):
 # !----------------------------------------------------------------------------MESSAGE
 @bot.message_handler()
 def send_book(message):
+  bot.send_chat_action(message.chat.id, action="typing")
   global ignoreFlag,book_name,again_msg,send_book_msg,finish_msg,sentBooks,message_obj
   user_id = message.from_user.id
   try:
@@ -270,5 +271,6 @@ class StderrLogHandler(logging.Handler):
 # Добавим обработчики к объектам логирования
 stderr_logger.addHandler(StderrLogHandler())
 
-bot.polling(none_stop=True)
+if __name__ == '__main__':
+    bot.polling(none_stop=True)
 
