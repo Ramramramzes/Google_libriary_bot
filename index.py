@@ -66,7 +66,6 @@ def send_book(message):
       bot.delete_message(message.chat.id, message.id)
       return
   except:
-    bot.delete_message(message.chat.id, message.id)
     pass
   if check_subscription_call_checker(user_id, channel_id):
       
