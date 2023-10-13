@@ -45,7 +45,7 @@ def start(message):
 
   user_id = message.from_user.id
   check_subscription_mess(user_id,channel_id,message)
-  ignoreFlag = True
+  # ignoreFlag = True
   if descripsion_mode is False:
     bot.delete_message(message.chat.id, message.message_id)
   else:
@@ -67,6 +67,14 @@ def send_book(message):
       return
   except:
     pass
+  try:
+    bot.delete_message(again_msg.chat.id, again_msg.message_id)
+  except:
+    pass
+  try:
+    bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+  except:
+    pass
   if check_subscription_call_checker(user_id, channel_id):
       
     book_name = message.text.strip()
@@ -78,12 +86,13 @@ def send_book(message):
 
 
     if len(book_name) <= 2:
-      markup = telebot.types.InlineKeyboardMarkup()
-      item = telebot.types.InlineKeyboardButton("еще раз", callback_data='short')
-      markup.add(item)
+      # markup = telebot.types.InlineKeyboardMarkup()
+      # item = telebot.types.InlineKeyboardButton("еще раз", callback_data='short')
+      # markup.add(item)
       bot.delete_message(message.chat.id, message.id)
-      again_msg = bot.send_message(message.chat.id,'Слишком короткий запрос 🤏',reply_markup=markup)
-      ignoreFlag = True
+      again_msg = bot.send_message(message.chat.id,'Слишком короткий запрос 🤏')
+      send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
+      # ignoreFlag = True
       return
     
     #! Выполнение запроса для списка файлов и папок в данной папке
@@ -119,14 +128,9 @@ def send_book(message):
       
       finish_msg = bot.send_message(message.chat.id, 'Поиск завершен ✅', reply_markup=markup)
     else:
-      ignoreFlag = True
-      markup = telebot.types.InlineKeyboardMarkup()
-      item = telebot.types.InlineKeyboardButton("Искать 🔎", callback_data='main')
-      markup.add(item)
-
       bot.delete_message(message.chat.id, message.id)
-      finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено ❌', reply_markup=markup)
-      return
+      finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено ❌')
+      send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
   else:
     bot.delete_message(message.chat.id, message.id)
     check_subscription_mess(user_id, channel_id,message)
