@@ -58,8 +58,9 @@ def start(message):
 # !----------------------------------------------------------------------------MESSAGE
 @bot.message_handler()
 def send_book(message):
-  bot.send_chat_action(message.chat.id, action="typing")
   global ignoreFlag,book_name,again_msg,send_book_msg,finish_msg,sentBooks,message_obj
+  ignoreFlag = False
+  bot.send_chat_action(message.chat.id, action="typing")
   user_id = message.from_user.id
   try:
     bot.delete_message(begin_msg.chat.id, begin_msg.message_id)
