@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import time
+import logging
 
 load_dotenv()
 myToken = os.getenv('myToken')
@@ -59,11 +60,14 @@ def start(message):
 def send_book(message):
   global ignoreFlag,book_name,again_msg,send_book_msg,finish_msg,sentBooks,message_obj
   user_id = message.from_user.id
-  if ignoreFlag is not False:
+  try:
+    if ignoreFlag is not False:
       bot.delete_message(message.chat.id, message.id)
       return
+  except:
+    bot.delete_message(message.chat.id, message.id)
+    pass
   if check_subscription_call_checker(user_id, channel_id):
-    print('messageHendler подписка - ',descripsion_mode)
       
     book_name = message.text.strip()
 
@@ -135,7 +139,6 @@ def main(call):
     bot.answer_callback_query(call.id, 'Вы уже нажали кнопку 😡', show_alert=True)
   else:
     last_button_click[user_id] = time.time()
-    print(descripsion_mode)
     if descripsion_mode is False:
   # !----------------------------------------------------------------------------ПОДПИСКИ_НЕТ
       bot.answer_callback_query(call.id, 'Проверяем ⌛', show_alert=True)
@@ -176,7 +179,6 @@ def check_subscription_mess(user_id, channel_id,message):
   chat_member = bot.get_chat_member(chat_id=int(channel_id), user_id=int(user_id))
   if chat_member.status in ["member","administrator","creator"]:
     # Пользователь подписан на канал
-    print('200')
     descripsion_mode = True
     return True  
   elif chat_member.status not in ["member"]:
@@ -190,7 +192,6 @@ def check_subscription_mess(user_id, channel_id,message):
       pass
     reg = bot.send_message(message.chat.id,'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus',reply_markup=markup)
     ignoreFlag = True
-    print('400')
     # Пользователь не подписан на канал
     return False
 
@@ -199,7 +200,6 @@ def check_subscription_call(user_id, channel_id,call):
   chat_member = bot.get_chat_member(chat_id=int(channel_id), user_id=int(user_id))
   if chat_member.status in ["member","administrator","creator"]:
     # Пользователь подписан на канал
-    print('200')
     descripsion_mode = True
     main(call)
     return True  
@@ -214,7 +214,6 @@ def check_subscription_call(user_id, channel_id,call):
     markup.add(item)
     reg = bot.send_message(call.message.chat.id,'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus',reply_markup=markup)
     ignoreFlag = True
-    print('400')
     # Пользователь не подписан на канал
     return False    
 
@@ -253,6 +252,23 @@ def clear(call):
   noneFlag = False
 
   main(call)
+
+# Настроим журнал логов
+logging.basicConfig(filename='myapp.log', level=logging.DEBUG)
+
+# Создадим объекты для перенаправления stdout и stderr
+stdout_logger = logging.getLogger('stdout_logger')
+stderr_logger = logging.getLogger('stderr_logger')
+
+# Создадим обработчики для записи stdout и stderr в журнал
+
+class StderrLogHandler(logging.Handler):
+    def emit(self, record):
+        log_message = self.format(record)
+        stderr_logger.error(log_message)
+
+# Добавим обработчики к объектам логирования
+stderr_logger.addHandler(StderrLogHandler())
 
 bot.polling(none_stop=True)
 
