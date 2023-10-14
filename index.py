@@ -59,7 +59,7 @@ def start(message):
 @bot.message_handler()
 def send_book(message):
   global ignoreFlag,book_name,again_msg,send_book_msg,finish_msg,sentBooks,message_obj
-  ignoreFlag = False
+  # ignoreFlag = False
   bot.send_chat_action(message.chat.id, action="typing")
   user_id = message.from_user.id
   try:
@@ -123,15 +123,16 @@ def send_book(message):
       for link in finalArr:
         sentBooks.append(bot.send_message(message.chat.id, f'Похожие на "{book_name}" книги 📖 : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
         inc+=1
-      
+        ignoreFlag = True
       # Создание кнопки и сохранения id для дальнейшего удаления
       # Удаляем сообщение пользователя
       bot.delete_message(message.chat.id, message.id)
       markup = telebot.types.InlineKeyboardMarkup()
       item = telebot.types.InlineKeyboardButton("Искать 🔎", callback_data='clear')
       markup.add(item)
-      
+      ignoreFlag = True
       finish_msg = bot.send_message(message.chat.id, 'Поиск завершен ✅', reply_markup=markup)
+
     else:
       bot.delete_message(message.chat.id, message.id)
       finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено ❌')
@@ -256,17 +257,22 @@ def clear(call):
   bot.answer_callback_query(call.id, 'Чистим 🧹', show_alert=True)
   global message_obj,send_books,finish_msg,noneFlag
   for message_obj in sentBooks:
-    bot.delete_message(call.message.chat.id, message_obj.message_id)
-  bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+    try:
+      bot.delete_message(call.message.chat.id, message_obj.message_id)
+    except:
+      pass
+  try:
+    bot.delete_message(finish_msg.chat.id, finish_msg.message_id)
+  except:
+    pass
   noneFlag = False
 
   main(call)
 
 # Настроим журнал логов
-logging.basicConfig(filename='myapp.log', level=logging.DEBUG)
+logging.basicConfig(filename='myapp.log', level=logging.ERROR)
 
 # Создадим объекты для перенаправления stdout и stderr
-stdout_logger = logging.getLogger('stdout_logger')
 stderr_logger = logging.getLogger('stderr_logger')
 
 # Создадим обработчики для записи stdout и stderr в журнал
