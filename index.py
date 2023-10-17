@@ -143,6 +143,7 @@ def send_book(message):
       user_context.sentBooks = []
       inc = 0
       for link in finalArr:
+        time.sleep(.25)
         user_context.sentBooks.append(bot.send_message(message.chat.id, f'Похожие на "{user_context.book_name}" книги 📖 : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
         inc+=1
         user_context.ignoreFlag = True
