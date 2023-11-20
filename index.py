@@ -1,3 +1,4 @@
+# Импорт необходимых библиотек
 import telebot
 import os
 from dotenv import load_dotenv
@@ -6,12 +7,13 @@ from googleapiclient.discovery import build
 import time
 import logging
 
+# Загрузка переменных окружения из файла .env 
 load_dotenv()
-myToken = os.getenv('myToken')
-channel_id = os.getenv('channel_id')
+myToken = os.getenv('myToken') # - токен бота
+channel_id = os.getenv('channel_id') # - токен канала канала
 bot = telebot.TeleBot(myToken)
 
-
+# Класс для хранения данных пользователя
 class UserContext:
     def __init__(self):
         self.ignoreFlag = False
@@ -25,8 +27,10 @@ class UserContext:
         self.sentBooks = []
         self.last_button_click = {}
 
+# Словарь для хранения данных пользователей
 user_contexts = {}
 
+# Функция получения данных пользователя
 def get_user_context(user_id):
     if user_id not in user_contexts:
         user_contexts[user_id] = UserContext()
@@ -47,17 +51,20 @@ service = build('drive', 'v3', credentials=creds)
 
 # ID папки, которую вы хотите просмотреть
 folder_id = os.getenv('folder_id')
-# !----------------------------------------------------------------------------START
+
+#! Обработчик команды /start
 @bot.message_handler(commands=['start'])
 def start(message):
   user_id = message.from_user.id
   user_context = get_user_context(user_id)
+  # Отправка приветственного сообщения
   bot.send_message(message.chat.id,'Библиотека OMFS📚')
   try:
     bot.delete_message(message.chat.id, message.message_id)
   except:
     pass
 
+  # Проверка подписки пользователя и вывод соответствующего сообщения
   check_subscription_mess(user_id,channel_id,message)
   if user_context.descripsion_mode is False:
     try:
@@ -69,7 +76,8 @@ def start(message):
     user_context.send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
     user_context.ignoreFlag = False
 
-# !----------------------------------------------------------------------------MESSAGE
+
+#! Обработчик всех типов сообщений, кроме текстовых
 @bot.message_handler(content_types=['text', 'audio', 'document', 'photo', 'sticker', 'video', 'video_note', 'voice', 'location', 'contact', 'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created', 'channel_chat_created', 'migrate_to_chat_id', 'migrate_from_chat_id', 'pinned_message', 'web_app_data'])
 def send_book(message):
   user_id = message.from_user.id
@@ -82,8 +90,9 @@ def send_book(message):
       return
     except:
       pass 
-
+  # Отправляем индикацию набора текста
   bot.send_chat_action(message.chat.id, action="typing")
+  # Удаляем предыдущие сообщения, если они существуют
   try:
     bot.delete_message(user_context.begin_msg.chat.id, user_context.begin_msg.message_id)
   except:
@@ -102,16 +111,15 @@ def send_book(message):
     bot.delete_message(user_context.finish_msg.chat.id, user_context.finish_msg.message_id)
   except:
     pass
+  # Проверяем подписку пользователя перед выполнением основного функционала
   if check_subscription_call_checker(user_id, channel_id):
-      
     user_context.book_name = message.text.strip()
-
+    # Удаляем сообщение с запросом о книге
     try:
       bot.delete_message(user_context.send_book_msg.chat.id, user_context.send_book_msg.message_id)
     except:
       pass
-
-    
+    # Проверка длины запроса
     if len(user_context.book_name) <= 2:
       try:
         bot.delete_message(message.chat.id, message.id)
@@ -128,6 +136,7 @@ def send_book(message):
 
     finalArr = []
     nameArr = []
+    # Поиск совпадений и формирование массива с ссылками
     for file in files:
       file_id = file['id']
       file_name = file['name']
@@ -137,6 +146,7 @@ def send_book(message):
           if file_link not in finalArr:
             finalArr.append(file_link)
             nameArr.append(file_name)
+    # Если найдены совпадения, отправляем ссылки
     if len(finalArr) != 0:
       # Создание массива отправленных ссылок для дальнейшего удаления  
       user_context.ignoreFlag = True
@@ -147,9 +157,9 @@ def send_book(message):
         user_context.sentBooks.append(bot.send_message(message.chat.id, f'Похожие на "{user_context.book_name}" книги 📖 : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
         inc+=1
         user_context.ignoreFlag = True
-      # Создание кнопки и сохранения id для дальнейшего удаления
       # Удаляем сообщение пользователя
       bot.delete_message(message.chat.id, message.id)
+      # Создание кнопки и сохранения id для дальнейшего удаления
       markup = telebot.types.InlineKeyboardMarkup()
       item = telebot.types.InlineKeyboardButton("Искать 🔎", callback_data='clear')
       markup.add(item)
@@ -164,18 +174,18 @@ def send_book(message):
   else:
     bot.delete_message(message.chat.id, message.id)
     check_subscription_mess(user_id, channel_id,message)
-# !----------------------------------------------------------------------------CALL_MAIN
+#! Обработчик нажатия кнопки "main" (основной)
 @bot.callback_query_handler(func=lambda call: call.data == 'main')
 def main(call):
   user_id = call.from_user.id
   user_context = get_user_context(user_id)
-
+  # Проверка на повторное нажатие кнопки в течение 3 секунд
   if user_id in user_context.last_button_click and time.time() - user_context.last_button_click[user_id] < 3 and user_context.descripsion_mode is not True:
     bot.answer_callback_query(call.id, 'Вы уже нажали кнопку 😡', show_alert=True)
   else:
     user_context.last_button_click[user_id] = time.time()
     if user_context.descripsion_mode is False:
-  # !----------------------------------------------------------------------------ПОДПИСКИ_НЕТ
+      #! Подписки нет
       bot.answer_callback_query(call.id, 'Проверяем ⌛', show_alert=True)
       try:
         bot.delete_message(user_context.reg.chat.id, user_context.reg.message_id)
@@ -187,7 +197,7 @@ def main(call):
         pass
       check_subscription_call(user_id,channel_id,call)
     else:
-  # !---------------------------------------------------------------------------ПОДПИСКА_ЕСТЬ
+      #! Подписка есть
       try:
         bot.delete_message(user_context.again_msg.chat.id, user_context.again_msg.message_id)
       except:
@@ -207,6 +217,7 @@ def main(call):
       user_context.send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
       user_context.ignoreFlag = False
 
+#! Функция проверки подписки пользователя при отправке сообщения
 def check_subscription_mess(user_id, channel_id,message):
   user_id = message.from_user.id
   user_context = get_user_context(user_id)
@@ -229,7 +240,7 @@ def check_subscription_mess(user_id, channel_id,message):
     user_context.ignoreFlag = True
     # Пользователь не подписан на канал
     return False
-
+#! Функция проверки подписки пользователя при нажатии кнопки
 def check_subscription_call(user_id, channel_id,call):
   user_context = get_user_context(user_id)
 
@@ -252,7 +263,8 @@ def check_subscription_call(user_id, channel_id,call):
     user_context.ignoreFlag = True
     # Пользователь не подписан на канал
     return False    
-
+  
+#! Функция проверки подписки пользователя для использования в коде
 def check_subscription_call_checker(user_id, channel_id):
   user_context = get_user_context(user_id)
   
@@ -263,23 +275,24 @@ def check_subscription_call_checker(user_id, channel_id):
   elif chat_member.status not in ["member"]:
     user_context.descripsion_mode = False
     return False  
-# !----------------------------------------------------------------------------CALL_SHORT
+#! Обработчик нажатия кнопки "short" (короткое название книги)
 @bot.callback_query_handler(func=lambda call: call.data == 'short')
 def short_book_name(call):
   user_id = call.from_user.id
   user_context = get_user_context(user_id)
-  
+  # Если включен режим подписки, убираем предыдущее сообщение и отправляем запрос на ввод книги
   if user_context.descripsion_mode is True:
     bot.delete_message(user_context.again_msg.chat.id, user_context.again_msg.message_id)
     user_context.send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
     user_context.ignoreFlag = False
   else:
+    # Проверяем подписку пользователя
     check_subscription_call(user_id,channel_id,call)
     try:
       bot.delete_message(user_context.again_msg.chat.id, user_context.again_msg.message_id)
     except:
       pass
-# !----------------------------------------------------------------------------CALL_CLEAR
+#! Обработчик нажатия кнопки "clear" (очистка ссылок)
 @bot.callback_query_handler(func=lambda call: call.data == 'clear')
 def clear(call):
   bot.answer_callback_query(call.id, 'Чистим 🧹', show_alert=True)
