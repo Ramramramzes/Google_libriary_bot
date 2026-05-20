@@ -6,7 +6,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY index.py db.py ./
+COPY index.py db.py payments.py ./
 
 ENV DB_PATH=/data/bot.db
 VOLUME /data

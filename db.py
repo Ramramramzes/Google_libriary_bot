@@ -1,9 +1,13 @@
 import json
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
+from datetime import date
 
 DB_PATH = os.getenv('DB_PATH', 'data/bot.db')
+DAILY_FREE_LIMIT = int(os.getenv('DAILY_FREE_LIMIT', '5'))
+PREMIUM_DAYS = int(os.getenv('PREMIUM_DAYS', '30'))
 
 
 def init_db():
@@ -17,7 +21,36 @@ def init_db():
                 subscribed INTEGER NOT NULL DEFAULT 0,
                 ignore_flag INTEGER NOT NULL DEFAULT 0,
                 last_button_click REAL NOT NULL DEFAULT 0,
-                result_message_ids TEXT NOT NULL DEFAULT '[]'
+                result_message_ids TEXT NOT NULL DEFAULT '[]',
+                extra_message_ids TEXT NOT NULL DEFAULT '[]',
+                last_search_results TEXT NOT NULL DEFAULT '[]',
+                last_search_query TEXT NOT NULL DEFAULT '',
+                downloaded_indices TEXT NOT NULL DEFAULT '[]',
+                premium_until REAL NOT NULL DEFAULT 0,
+                daily_books_count INTEGER NOT NULL DEFAULT 0,
+                daily_reset_date TEXT NOT NULL DEFAULT ''
+            )
+        ''')
+        for ddl in (
+            'ALTER TABLE users ADD COLUMN premium_until REAL NOT NULL DEFAULT 0',
+            'ALTER TABLE users ADD COLUMN daily_books_count INTEGER NOT NULL DEFAULT 0',
+            'ALTER TABLE users ADD COLUMN daily_reset_date TEXT NOT NULL DEFAULT \'\'',
+            'ALTER TABLE users ADD COLUMN extra_message_ids TEXT NOT NULL DEFAULT \'[]\'',
+            'ALTER TABLE users ADD COLUMN last_search_results TEXT NOT NULL DEFAULT \'[]\'',
+            'ALTER TABLE users ADD COLUMN downloaded_indices TEXT NOT NULL DEFAULT \'[]\'',
+            'ALTER TABLE users ADD COLUMN last_search_query TEXT NOT NULL DEFAULT \'\'',
+        ):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                stars INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                paid_at REAL NOT NULL
             )
         ''')
 
@@ -98,12 +131,172 @@ def clear_result_messages(user_id, chat_id):
     set_result_message_ids(user_id, chat_id, [])
 
 
+def get_extra_message_ids(user_id):
+    user = get_user(user_id)
+    if not user:
+        return []
+    return json.loads(user.get('extra_message_ids') or '[]')
+
+
+def add_extra_message_id(user_id, chat_id, message_id):
+    ids = get_extra_message_ids(user_id)
+    if message_id not in ids:
+        ids.append(message_id)
+    upsert_user(user_id, chat_id, extra_message_ids=json.dumps(ids))
+
+
+def clear_extra_messages(user_id, chat_id):
+    upsert_user(user_id, chat_id, extra_message_ids='[]')
+
+
 def reset_session(user_id, chat_id):
-    """Сброс после очистки истории чата — старые message_id недействительны."""
     upsert_user(
         user_id,
         chat_id,
         ui_message_id=None,
         ignore_flag=0,
         result_message_ids='[]',
+        extra_message_ids='[]',
+        last_search_results='[]',
+        last_search_query='',
+    )
+
+
+def _today():
+    return date.today().isoformat()
+
+
+def _ensure_daily_reset(user_id, chat_id):
+    user = get_user(user_id)
+    if not user:
+        upsert_user(user_id, chat_id)
+        user = get_user(user_id)
+    if user.get('daily_reset_date') != _today():
+        upsert_user(
+            user_id,
+            chat_id,
+            daily_books_count=0,
+            daily_reset_date=_today(),
+            downloaded_indices='[]',
+        )
+
+
+def has_premium(user_id):
+    user = get_user(user_id)
+    if not user:
+        return False
+    return float(user.get('premium_until') or 0) > time.time()
+
+
+def get_daily_books_used(user_id, chat_id):
+    _ensure_daily_reset(user_id, chat_id)
+    user = get_user(user_id)
+    return int(user.get('daily_books_count') or 0)
+
+
+def get_books_remaining(user_id, chat_id):
+    _ensure_daily_reset(user_id, chat_id)
+    used = get_daily_books_used(user_id, chat_id)
+    return max(0, DAILY_FREE_LIMIT - used)
+
+
+def add_books_used(user_id, chat_id, count):
+    if count <= 0:
+        return
+    _ensure_daily_reset(user_id, chat_id)
+    used = get_daily_books_used(user_id, chat_id)
+    upsert_user(
+        user_id,
+        chat_id,
+        daily_books_count=used + count,
+        daily_reset_date=_today(),
+    )
+
+
+def grant_premium(user_id, chat_id, days=None):
+    days = days or PREMIUM_DAYS
+    user = get_user(user_id)
+    now = time.time()
+    current = float(user.get('premium_until') or 0) if user else 0
+    base = max(now, current)
+    upsert_user(user_id, chat_id, premium_until=base + days * 86400)
+
+
+def log_payment(user_id, stars, payload):
+    with get_connection() as conn:
+        conn.execute(
+            'INSERT INTO payments (user_id, stars, payload, paid_at) VALUES (?, ?, ?, ?)',
+            (user_id, stars, payload, time.time()),
+        )
+
+
+def get_status_text(user_id, chat_id):
+    _ensure_daily_reset(user_id, chat_id)
+    used = get_daily_books_used(user_id, chat_id)
+    remaining = max(0, DAILY_FREE_LIMIT - used)
+    if has_premium(user_id):
+        user = get_user(user_id)
+        until = float(user.get('premium_until') or 0)
+        from datetime import datetime
+        dt = datetime.fromtimestamp(until).strftime('%d.%m.%Y')
+        return (
+            f'⭐ Premium активен до {dt}\n'
+            f'📥 Сегодня скачано: {used}/{DAILY_FREE_LIMIT} '
+            f'(осталось {remaining})'
+        )
+    return f'🔒 Premium не активен\n📥 Лимит после оплаты: {DAILY_FREE_LIMIT} скачиваний/день'
+
+
+def set_last_search_results(user_id, chat_id, results, query=''):
+    upsert_user(
+        user_id,
+        chat_id,
+        last_search_results=json.dumps(results),
+        last_search_query=query or '',
+    )
+
+
+def get_last_search_query(user_id):
+    user = get_user(user_id)
+    if not user:
+        return ''
+    return user.get('last_search_query') or ''
+
+
+def get_downloaded_file_ids(user_id):
+    """ID файлов Google Drive, уже скачанных сегодня (между поисками)."""
+    user = get_user(user_id)
+    if not user:
+        return set()
+    raw = json.loads(user.get('downloaded_indices') or '[]')
+    return {str(x) for x in raw}
+
+
+def mark_downloaded_file(user_id, chat_id, file_id):
+    file_ids = get_downloaded_file_ids(user_id)
+    file_ids.add(str(file_id))
+    upsert_user(
+        user_id,
+        chat_id,
+        downloaded_indices=json.dumps(sorted(file_ids)),
+    )
+
+
+def is_downloaded_file(user_id, file_id):
+    return str(file_id) in get_downloaded_file_ids(user_id)
+
+
+def get_last_search_results(user_id):
+    user = get_user(user_id)
+    if not user:
+        return []
+    return json.loads(user.get('last_search_results') or '[]')
+
+
+def clear_last_search_results(user_id, chat_id):
+    upsert_user(
+        user_id,
+        chat_id,
+        last_search_results='[]',
+        last_search_query='',
     )
