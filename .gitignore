@@ -50,3 +50,6 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Архив для деплоя (содержит секреты)
+*-deploy.zip

@@ -96,3 +96,14 @@ def set_result_message_ids(user_id, chat_id, message_ids):
 
 def clear_result_messages(user_id, chat_id):
     set_result_message_ids(user_id, chat_id, [])
+
+
+def reset_session(user_id, chat_id):
+    """Сброс после очистки истории чата — старые message_id недействительны."""
+    upsert_user(
+        user_id,
+        chat_id,
+        ui_message_id=None,
+        ignore_flag=0,
+        result_message_ids='[]',
+    )

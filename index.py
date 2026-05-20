@@ -25,14 +25,17 @@ service = build('drive', 'v3', credentials=creds)
 folder_id = os.getenv('folder_id')
 
 PROMPT_TEXT = 'Отправьте слово из названия или имени автора 📕'
+LOADING_TEXT = '🔎 Ищем книги в библиотеке…'
 SUBSCRIBE_TEXT = 'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus'
 SUBSCRIBE_MARKUP = telebot.types.InlineKeyboardMarkup()
 SUBSCRIBE_MARKUP.add(
     telebot.types.InlineKeyboardButton('Подписался ✅', callback_data='main')
 )
-SEARCH_MARKUP = telebot.types.InlineKeyboardMarkup()
-SEARCH_MARKUP.add(
-    telebot.types.InlineKeyboardButton('Искать 🔎', callback_data='clear')
+EMPTY_MARKUP = telebot.types.InlineKeyboardMarkup()
+
+SEARCH_DONE_TEXT = (
+    'Поиск завершен ✅\n\n'
+    'Для нового поиска введите слово из названия или имени автора 📕'
 )
 
 
@@ -53,13 +56,19 @@ def update_ui_message(
     reply_markup=None,
     parse_mode=None,
     disable_web_page_preview=None,
+    force_new=False,
 ):
     """Редактирует одно UI-сообщение или создаёт новое, если старое недоступно."""
+    if force_new:
+        db.clear_ui_message_id(user_id, chat_id)
+
     user = db.get_user(user_id)
     message_id = user['ui_message_id'] if user else None
     kwargs = {}
     if reply_markup is not None:
         kwargs['reply_markup'] = reply_markup
+    elif message_id:
+        kwargs['reply_markup'] = EMPTY_MARKUP
     if parse_mode:
         kwargs['parse_mode'] = parse_mode
     if disable_web_page_preview is not None:
@@ -73,11 +82,23 @@ def update_ui_message(
             err = str(e).lower()
             if 'message is not modified' in err:
                 return message_id
-            db.clear_ui_message_id(user_id, chat_id)
+            logging.warning(
+                'edit_message_text failed user=%s msg=%s: %s',
+                user_id, message_id, e,
+            )
+        except Exception as e:
+            logging.exception(
+                'edit_message_text unexpected error user=%s: %s', user_id, e
+            )
+        db.clear_ui_message_id(user_id, chat_id)
 
-    msg = bot.send_message(chat_id, text, **kwargs)
-    db.set_ui_message_id(user_id, chat_id, msg.message_id)
-    return msg.message_id
+    try:
+        msg = bot.send_message(chat_id, text, **kwargs)
+        db.set_ui_message_id(user_id, chat_id, msg.message_id)
+        return msg.message_id
+    except Exception as e:
+        logging.exception('send_message failed user=%s: %s', user_id, e)
+        return None
 
 
 def delete_user_message(chat_id, message_id):
@@ -93,19 +114,47 @@ def delete_result_messages(user_id, chat_id):
     db.clear_result_messages(user_id, chat_id)
 
 
-def show_prompt(chat_id, user_id):
+def show_prompt(chat_id, user_id, force_new=False):
     db.set_ignore_flag(user_id, chat_id, False)
     text = PROMPT_TEXT
     if is_subscribed(user_id):
         text = f'Вы подписаны ✅\n\n{PROMPT_TEXT}'
-    update_ui_message(chat_id, user_id, text)
+    return update_ui_message(chat_id, user_id, text, force_new=force_new)
 
 
-def show_subscribe(chat_id, user_id):
+def show_subscribe(chat_id, user_id, force_new=False):
     db.set_ignore_flag(user_id, chat_id, True)
-    update_ui_message(
-        chat_id, user_id, SUBSCRIBE_TEXT, reply_markup=SUBSCRIBE_MARKUP
+    return update_ui_message(
+        chat_id,
+        user_id,
+        SUBSCRIBE_TEXT,
+        reply_markup=SUBSCRIBE_MARKUP,
+        force_new=force_new,
     )
+
+
+def get_chat_member_safe(channel_id, user_id):
+    """Проверка подписки без падения бота при ошибках API."""
+    if not channel_id:
+        logging.error('channel_id не задан в .env')
+        return None, 'no_channel'
+    try:
+        return bot.get_chat_member(
+            chat_id=int(channel_id), user_id=int(user_id)
+        ), None
+    except telebot.apihelper.ApiTelegramException as e:
+        err = str(e).lower()
+        logging.error(
+            'get_chat_member failed channel=%s user=%s: %s',
+            channel_id, user_id, e,
+        )
+        if 'chat not found' in err:
+            return None, 'chat_not_found'
+        return None, 'api_error'
+
+
+def is_member_status(status):
+    return status in ['member', 'administrator', 'creator']
 
 
 @bot.message_handler(commands=['start'])
@@ -113,11 +162,14 @@ def start(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
     db.upsert_user(user_id, chat_id)
+    db.reset_session(user_id, chat_id)
 
+    subscribed = check_subscription_mess(
+        user_id, channel_id, message, force_new=True
+    )
+    if subscribed:
+        show_prompt(chat_id, user_id, force_new=True)
     delete_user_message(chat_id, message.message_id)
-
-    if check_subscription_mess(user_id, channel_id, message):
-        show_prompt(chat_id, user_id)
 
 
 @bot.message_handler(
@@ -142,30 +194,34 @@ def send_book(message):
         delete_user_message(chat_id, message.message_id)
         return
 
-    bot.send_chat_action(chat_id, action='typing')
-
     if is_ignore_flag(user_id):
-        delete_user_message(chat_id, message.message_id)
-        return
-
-    delete_result_messages(user_id, chat_id)
+        delete_result_messages(user_id, chat_id)
+        db.set_ignore_flag(user_id, chat_id, False)
+    else:
+        delete_result_messages(user_id, chat_id)
 
     if not check_subscription_call_checker(user_id, channel_id, chat_id):
+        check_subscription_mess(user_id, channel_id, message, force_new=True)
         delete_user_message(chat_id, message.message_id)
-        check_subscription_mess(user_id, channel_id, message)
         return
 
     book_name = message.text.strip()
-    delete_user_message(chat_id, message.message_id)
+    user_msg_id = message.message_id
 
     if len(book_name) <= 2:
-        update_ui_message(
+        if update_ui_message(
             chat_id,
             user_id,
             f'Слишком короткий запрос 🤏\n\n{PROMPT_TEXT}',
-        )
+        ):
+            delete_user_message(chat_id, user_msg_id)
         db.set_ignore_flag(user_id, chat_id, False)
         return
+
+    bot.send_chat_action(chat_id, action='typing')
+    ui_id = update_ui_message(chat_id, user_id, LOADING_TEXT)
+    if ui_id:
+        delete_user_message(chat_id, user_msg_id)
 
     results = service.files().list(
         q=f"'{folder_id}' in parents",
@@ -188,6 +244,7 @@ def send_book(message):
     if final_arr:
         result_ids = []
         for i, link in enumerate(final_arr):
+            bot.send_chat_action(chat_id, action='typing')
             time.sleep(0.25)
             sent = bot.send_message(
                 chat_id,
@@ -197,14 +254,11 @@ def send_book(message):
                 parse_mode='HTML',
             )
             result_ids.append(sent.message_id)
+        finish = bot.send_message(chat_id, SEARCH_DONE_TEXT)
+        result_ids.append(finish.message_id)
         db.set_result_message_ids(user_id, chat_id, result_ids)
         db.set_ignore_flag(user_id, chat_id, True)
-        update_ui_message(
-            chat_id,
-            user_id,
-            'Поиск завершен ✅',
-            reply_markup=SEARCH_MARKUP,
-        )
+        show_prompt(chat_id, user_id)
     else:
         update_ui_message(chat_id, user_id, f'Ничего не найдено ❌\n\n{PROMPT_TEXT}')
         db.set_ignore_flag(user_id, chat_id, False)
@@ -235,37 +289,51 @@ def main_handler(call):
         check_subscription_call(user_id, channel_id, call)
     else:
         delete_result_messages(user_id, chat_id)
-        show_prompt(chat_id, user_id)
+        db.clear_ui_message_id(user_id, chat_id)
+        show_prompt(chat_id, user_id, force_new=True)
         bot.answer_callback_query(call.id)
 
 
-def check_subscription_mess(user_id, channel_id, message):
-    chat_id = message.chat.id
-    chat_member = bot.get_chat_member(
-        chat_id=int(channel_id), user_id=int(user_id)
-    )
-    if chat_member.status in ['member', 'administrator', 'creator']:
+def _handle_subscription_check(user_id, chat_id):
+    """
+    Возвращает True если пользователь подписан (или проверка недоступна).
+    False — нужно показать экран подписки.
+    """
+    chat_member, error = get_chat_member_safe(channel_id, user_id)
+
+    if error == 'chat_not_found':
+        # Бот не добавлен в канал — иначе падает весь /start
+        db.set_subscribed(user_id, chat_id, True)
+        return True
+
+    if error:
+        db.set_subscribed(user_id, chat_id, True)
+        return True
+
+    if is_member_status(chat_member.status):
         db.set_subscribed(user_id, chat_id, True)
         return True
 
     db.set_subscribed(user_id, chat_id, False)
-    show_subscribe(chat_id, user_id)
+    return False
+
+
+def check_subscription_mess(user_id, channel_id, message, force_new=False):
+    chat_id = message.chat.id
+    if _handle_subscription_check(user_id, chat_id):
+        return True
+    show_subscribe(chat_id, user_id, force_new=force_new)
     return False
 
 
 def check_subscription_call(user_id, channel_id, call):
     chat_id = call.message.chat.id
-    chat_member = bot.get_chat_member(
-        chat_id=int(channel_id), user_id=int(user_id)
-    )
-    if chat_member.status in ['member', 'administrator', 'creator']:
-        db.set_subscribed(user_id, chat_id, True)
-        show_prompt(chat_id, user_id)
+    if _handle_subscription_check(user_id, chat_id):
+        show_prompt(chat_id, user_id, force_new=True)
         bot.answer_callback_query(call.id, 'Подписка подтверждена ✅')
         return True
 
-    db.set_subscribed(user_id, chat_id, False)
-    show_subscribe(chat_id, user_id)
+    show_subscribe(chat_id, user_id, force_new=True)
     bot.answer_callback_query(call.id)
     return False
 
@@ -277,15 +345,7 @@ def check_subscription_call_checker(user_id, channel_id, chat_id=None):
     if chat_id is None:
         return False
 
-    chat_member = bot.get_chat_member(
-        chat_id=int(channel_id), user_id=int(user_id)
-    )
-    if chat_member.status in ['member', 'administrator', 'creator']:
-        db.set_subscribed(user_id, chat_id, True)
-        return True
-
-    db.set_subscribed(user_id, chat_id, False)
-    return False
+    return _handle_subscription_check(user_id, chat_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == 'short')
@@ -294,18 +354,9 @@ def short_book_name(call):
     chat_id = call.message.chat.id
 
     if is_subscribed(user_id):
-        show_prompt(chat_id, user_id)
+        show_prompt(chat_id, user_id, force_new=True)
     else:
         check_subscription_call(user_id, channel_id, call)
-
-
-@bot.callback_query_handler(func=lambda call: call.data == 'clear')
-def clear(call):
-    bot.answer_callback_query(call.id, 'Чистим 🧹', show_alert=True)
-    user_id = call.from_user.id
-    chat_id = call.message.chat.id
-    delete_result_messages(user_id, chat_id)
-    show_prompt(chat_id, user_id)
 
 
 logging.basicConfig(filename='myapp.log', level=logging.ERROR)

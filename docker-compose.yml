@@ -1,5 +1,6 @@
 services:
   bot:
+    platform: linux/amd64
     build: .
     restart: unless-stopped
     env_file:
