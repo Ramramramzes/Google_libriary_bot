@@ -1,329 +1,323 @@
-# Импорт необходимых библиотек
 import telebot
 import os
+import time
+import logging
 from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-import time
-import logging
+import db
 
-# Загрузка переменных окружения из файла .env 
 load_dotenv()
-myToken = os.getenv('myToken') # - токен бота
-channel_id = os.getenv('channel_id') # - токен канала канала
+myToken = os.getenv('myToken')
+channel_id = os.getenv('channel_id')
 bot = telebot.TeleBot(myToken)
 
-# Класс для хранения данных пользователя
-class UserContext:
-    def __init__(self):
-        self.ignoreFlag = False
-        self.descripsion_mode = False
-        self.send_book_msg = None
-        self.begin_msg = None
-        self.book_name = ""
-        self.again_msg = None
-        self.finish_msg = None
-        self.reg = None
-        self.sentBooks = []
-        self.last_button_click = {}
+db.init_db()
 
-# Словарь для хранения данных пользователей
-user_contexts = {}
-
-# Функция получения данных пользователя
-def get_user_context(user_id):
-    if user_id not in user_contexts:
-        user_contexts[user_id] = UserContext()
-    return user_contexts[user_id]
-
-#  Путь к JSON-файлу с учетными данными клиента
 credentials_file = 'myKey.json'
-
-# Создание объекта авторизации
 creds = None
 if os.path.exists(credentials_file):
-  creds = service_account.Credentials.from_service_account_file(
-      credentials_file, scopes=['https://www.googleapis.com/auth/drive.readonly']
-  )
+    creds = service_account.Credentials.from_service_account_file(
+        credentials_file, scopes=['https://www.googleapis.com/auth/drive.readonly']
+    )
 
-# Создание объекта API
 service = build('drive', 'v3', credentials=creds)
-
-# ID папки, которую вы хотите просмотреть
 folder_id = os.getenv('folder_id')
 
-#! Обработчик команды /start
+PROMPT_TEXT = 'Отправьте слово из названия или имени автора 📕'
+SUBSCRIBE_TEXT = 'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus'
+SUBSCRIBE_MARKUP = telebot.types.InlineKeyboardMarkup()
+SUBSCRIBE_MARKUP.add(
+    telebot.types.InlineKeyboardButton('Подписался ✅', callback_data='main')
+)
+SEARCH_MARKUP = telebot.types.InlineKeyboardMarkup()
+SEARCH_MARKUP.add(
+    telebot.types.InlineKeyboardButton('Искать 🔎', callback_data='clear')
+)
+
+
+def is_subscribed(user_id):
+    user = db.get_user(user_id)
+    return bool(user and user['subscribed'])
+
+
+def is_ignore_flag(user_id):
+    user = db.get_user(user_id)
+    return bool(user and user['ignore_flag'])
+
+
+def update_ui_message(
+    chat_id,
+    user_id,
+    text,
+    reply_markup=None,
+    parse_mode=None,
+    disable_web_page_preview=None,
+):
+    """Редактирует одно UI-сообщение или создаёт новое, если старое недоступно."""
+    user = db.get_user(user_id)
+    message_id = user['ui_message_id'] if user else None
+    kwargs = {}
+    if reply_markup is not None:
+        kwargs['reply_markup'] = reply_markup
+    if parse_mode:
+        kwargs['parse_mode'] = parse_mode
+    if disable_web_page_preview is not None:
+        kwargs['disable_web_page_preview'] = disable_web_page_preview
+
+    if message_id:
+        try:
+            bot.edit_message_text(text, chat_id, message_id, **kwargs)
+            return message_id
+        except telebot.apihelper.ApiTelegramException as e:
+            err = str(e).lower()
+            if 'message is not modified' in err:
+                return message_id
+            db.clear_ui_message_id(user_id, chat_id)
+
+    msg = bot.send_message(chat_id, text, **kwargs)
+    db.set_ui_message_id(user_id, chat_id, msg.message_id)
+    return msg.message_id
+
+
+def delete_user_message(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except telebot.apihelper.ApiTelegramException:
+        pass
+
+
+def delete_result_messages(user_id, chat_id):
+    for msg_id in db.get_result_message_ids(user_id):
+        delete_user_message(chat_id, msg_id)
+    db.clear_result_messages(user_id, chat_id)
+
+
+def show_prompt(chat_id, user_id):
+    db.set_ignore_flag(user_id, chat_id, False)
+    text = PROMPT_TEXT
+    if is_subscribed(user_id):
+        text = f'Вы подписаны ✅\n\n{PROMPT_TEXT}'
+    update_ui_message(chat_id, user_id, text)
+
+
+def show_subscribe(chat_id, user_id):
+    db.set_ignore_flag(user_id, chat_id, True)
+    update_ui_message(
+        chat_id, user_id, SUBSCRIBE_TEXT, reply_markup=SUBSCRIBE_MARKUP
+    )
+
+
 @bot.message_handler(commands=['start'])
 def start(message):
-  user_id = message.from_user.id
-  user_context = get_user_context(user_id)
-  # Отправка приветственного сообщения
-  bot.send_message(message.chat.id,'Библиотека OMFS📚')
-  try:
-    bot.delete_message(message.chat.id, message.message_id)
-  except:
-    pass
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    db.upsert_user(user_id, chat_id)
 
-  # Проверка подписки пользователя и вывод соответствующего сообщения
-  check_subscription_mess(user_id,channel_id,message)
-  if user_context.descripsion_mode is False:
-    try:
-      bot.delete_message(message.chat.id, message.message_id)
-    except:
-      pass
-  else:
-    user_context.begin_msg = bot.send_message(message.chat.id,'Вы подписаны ✅')
-    user_context.send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
-    user_context.ignoreFlag = False
+    delete_user_message(chat_id, message.message_id)
+
+    if check_subscription_mess(user_id, channel_id, message):
+        show_prompt(chat_id, user_id)
 
 
-#! Обработчик всех типов сообщений, кроме текстовых
-@bot.message_handler(content_types=['text', 'audio', 'document', 'photo', 'sticker', 'video', 'video_note', 'voice', 'location', 'contact', 'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created', 'channel_chat_created', 'migrate_to_chat_id', 'migrate_from_chat_id', 'pinned_message', 'web_app_data'])
+@bot.message_handler(
+    content_types=[
+        'text', 'audio', 'document', 'photo', 'sticker', 'video',
+        'video_note', 'voice', 'location', 'contact', 'new_chat_members',
+        'left_chat_member', 'new_chat_title', 'new_chat_photo',
+        'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created',
+        'channel_chat_created', 'migrate_to_chat_id', 'migrate_from_chat_id',
+        'pinned_message', 'web_app_data',
+    ]
+)
 def send_book(message):
-  user_id = message.from_user.id
-  user_context = get_user_context(user_id)
+    if message.text and message.text.startswith('/'):
+        return
 
-  # Если это не текстовое сообщение то удаляем его
-  if message.content_type != 'text':
-    try:
-      bot.delete_message(message.chat.id, message.id)
-      return
-    except:
-      pass 
-  # Отправляем индикацию набора текста
-  bot.send_chat_action(message.chat.id, action="typing")
-  # Удаляем предыдущие сообщения, если они существуют
-  try:
-    bot.delete_message(user_context.begin_msg.chat.id, user_context.begin_msg.message_id)
-  except:
-    pass
-  try:
-    if user_context.ignoreFlag is not False:
-      bot.delete_message(message.chat.id, message.id)
-      return
-  except:
-    pass
-  try:
-    bot.delete_message(user_context.again_msg.chat.id, user_context.again_msg.message_id)
-  except:
-    pass
-  try:
-    bot.delete_message(user_context.finish_msg.chat.id, user_context.finish_msg.message_id)
-  except:
-    pass
-  # Проверяем подписку пользователя перед выполнением основного функционала
-  if check_subscription_call_checker(user_id, channel_id):
-    user_context.book_name = message.text.strip()
-    # Удаляем сообщение с запросом о книге
-    try:
-      bot.delete_message(user_context.send_book_msg.chat.id, user_context.send_book_msg.message_id)
-    except:
-      pass
-    # Проверка длины запроса
-    if len(user_context.book_name) <= 2:
-      try:
-        bot.delete_message(message.chat.id, message.id)
-      except:
-        pass
-      user_context.again_msg = bot.send_message(message.chat.id,'Слишком короткий запрос 🤏')
-      user_context.send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
-      user_context.ignoreFlag = False
-      return
-    
-    #! Выполнение запроса для списка файлов и папок в данной папке
-    results = service.files().list(q=f"'{folder_id}' in parents", fields="files(id, name)",pageSize=1000).execute()
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    db.upsert_user(user_id, chat_id)
+
+    if message.content_type != 'text':
+        delete_user_message(chat_id, message.message_id)
+        return
+
+    bot.send_chat_action(chat_id, action='typing')
+
+    if is_ignore_flag(user_id):
+        delete_user_message(chat_id, message.message_id)
+        return
+
+    delete_result_messages(user_id, chat_id)
+
+    if not check_subscription_call_checker(user_id, channel_id, chat_id):
+        delete_user_message(chat_id, message.message_id)
+        check_subscription_mess(user_id, channel_id, message)
+        return
+
+    book_name = message.text.strip()
+    delete_user_message(chat_id, message.message_id)
+
+    if len(book_name) <= 2:
+        update_ui_message(
+            chat_id,
+            user_id,
+            f'Слишком короткий запрос 🤏\n\n{PROMPT_TEXT}',
+        )
+        db.set_ignore_flag(user_id, chat_id, False)
+        return
+
+    results = service.files().list(
+        q=f"'{folder_id}' in parents",
+        fields='files(id, name)',
+        pageSize=1000,
+    ).execute()
     files = results.get('files', [])
 
-    finalArr = []
-    nameArr = []
-    # Поиск совпадений и формирование массива с ссылками
+    final_arr = []
+    name_arr = []
     for file in files:
-      file_id = file['id']
-      file_name = file['name']
-      file_link = f"https://docs.google.com/file/d/{file_id}"
-      # Создание массива с ссылками совпавшими с поиском
-      if user_context.book_name.lower() in file_name.lower():
-          if file_link not in finalArr:
-            finalArr.append(file_link)
-            nameArr.append(file_name)
-    # Если найдены совпадения, отправляем ссылки
-    if len(finalArr) != 0:
-      # Создание массива отправленных ссылок для дальнейшего удаления  
-      user_context.ignoreFlag = True
-      user_context.sentBooks = []
-      inc = 0
-      for link in finalArr:
-        time.sleep(.25)
-        user_context.sentBooks.append(bot.send_message(message.chat.id, f'Похожие на "{user_context.book_name}" книги 📖 : <a href="{link}">{nameArr[inc]}</a>',disable_web_page_preview=True,parse_mode='HTML'))
-        inc+=1
-        user_context.ignoreFlag = True
-      # Удаляем сообщение пользователя
-      bot.delete_message(message.chat.id, message.id)
-      # Создание кнопки и сохранения id для дальнейшего удаления
-      markup = telebot.types.InlineKeyboardMarkup()
-      item = telebot.types.InlineKeyboardButton("Искать 🔎", callback_data='clear')
-      markup.add(item)
-      user_context.ignoreFlag = True
-      user_context.finish_msg = bot.send_message(message.chat.id, 'Поиск завершен ✅', reply_markup=markup)
+        file_id = file['id']
+        file_name = file['name']
+        file_link = f'https://docs.google.com/file/d/{file_id}'
+        if book_name.lower() in file_name.lower():
+            if file_link not in final_arr:
+                final_arr.append(file_link)
+                name_arr.append(file_name)
 
+    if final_arr:
+        result_ids = []
+        for i, link in enumerate(final_arr):
+            time.sleep(0.25)
+            sent = bot.send_message(
+                chat_id,
+                f'Похожие на "{book_name}" книги 📖 : '
+                f'<a href="{link}">{name_arr[i]}</a>',
+                disable_web_page_preview=True,
+                parse_mode='HTML',
+            )
+            result_ids.append(sent.message_id)
+        db.set_result_message_ids(user_id, chat_id, result_ids)
+        db.set_ignore_flag(user_id, chat_id, True)
+        update_ui_message(
+            chat_id,
+            user_id,
+            'Поиск завершен ✅',
+            reply_markup=SEARCH_MARKUP,
+        )
     else:
-      bot.delete_message(message.chat.id, message.id)
-      user_context.finish_msg = bot.send_message(message.chat.id, 'Ничего не найдено ❌')
-      user_context.send_book_msg = bot.send_message(message.chat.id,'Отправьте слово из названия или имени автора 📕')
-      user_context.ignoreFlag = False
-  else:
-    bot.delete_message(message.chat.id, message.id)
-    check_subscription_mess(user_id, channel_id,message)
-#! Обработчик нажатия кнопки "main" (основной)
+        update_ui_message(chat_id, user_id, f'Ничего не найдено ❌\n\n{PROMPT_TEXT}')
+        db.set_ignore_flag(user_id, chat_id, False)
+
+
 @bot.callback_query_handler(func=lambda call: call.data == 'main')
-def main(call):
-  user_id = call.from_user.id
-  user_context = get_user_context(user_id)
-  # Проверка на повторное нажатие кнопки в течение 3 секунд
-  if user_id in user_context.last_button_click and time.time() - user_context.last_button_click[user_id] < 3 and user_context.descripsion_mode is not True:
-    bot.answer_callback_query(call.id, 'Вы уже нажали кнопку 😡', show_alert=True)
-  else:
-    user_context.last_button_click[user_id] = time.time()
-    if user_context.descripsion_mode is False:
-      #! Подписки нет
-      bot.answer_callback_query(call.id, 'Проверяем ⌛', show_alert=True)
-      try:
-        bot.delete_message(user_context.reg.chat.id, user_context.reg.message_id)
-      except:
-        pass
-      try:
-        bot.delete_message(user_context.finish_msg.chat.id, user_context.finish_msg.message_id)
-      except:
-        pass
-      check_subscription_call(user_id,channel_id,call)
+def main_handler(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    db.upsert_user(user_id, chat_id)
+
+    user = db.get_user(user_id)
+    last_click = user['last_button_click'] if user else 0
+
+    if (
+        last_click
+        and time.time() - last_click < 3
+        and not is_subscribed(user_id)
+    ):
+        bot.answer_callback_query(call.id, 'Вы уже нажали кнопку 😡', show_alert=True)
+        return
+
+    db.set_last_button_click(user_id, chat_id, time.time())
+
+    if not is_subscribed(user_id):
+        bot.answer_callback_query(call.id, 'Проверяем ⌛', show_alert=True)
+        delete_result_messages(user_id, chat_id)
+        check_subscription_call(user_id, channel_id, call)
     else:
-      #! Подписка есть
-      try:
-        bot.delete_message(user_context.again_msg.chat.id, user_context.again_msg.message_id)
-      except:
-        pass
-      try:
-        bot.delete_message(user_context.begin_msg.chat.id, user_context.begin_msg.message_id)
-      except:
-        pass
-      try:
-        bot.delete_message(user_context.finish_msg.chat.id, user_context.finish_msg.message_id)
-      except:
-        pass
-      try:
-        bot.delete_message(user_context.reg.chat.id, user_context.reg.message_id)
-      except:
-        pass
-      user_context.send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
-      user_context.ignoreFlag = False
+        delete_result_messages(user_id, chat_id)
+        show_prompt(chat_id, user_id)
+        bot.answer_callback_query(call.id)
 
-#! Функция проверки подписки пользователя при отправке сообщения
-def check_subscription_mess(user_id, channel_id,message):
-  user_id = message.from_user.id
-  user_context = get_user_context(user_id)
 
-  chat_member = bot.get_chat_member(chat_id=int(channel_id), user_id=int(user_id))
-  if chat_member.status in ["member","administrator","creator"]:
-    # Пользователь подписан на канал
-    user_context.descripsion_mode = True
-    return True  
-  elif chat_member.status not in ["member"]:
-    user_context.descripsion_mode = False
-    markup = telebot.types.InlineKeyboardMarkup()
-    item = telebot.types.InlineKeyboardButton("Подписался ✅", callback_data='main')
-    markup.add(item)
-    try:
-      bot.delete_message(user_context.send_book_msg.chat.id, user_context.send_book_msg.message_id)
-    except:
-      pass
-    user_context.reg = bot.send_message(message.chat.id,'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus',reply_markup=markup)
-    user_context.ignoreFlag = True
-    # Пользователь не подписан на канал
+def check_subscription_mess(user_id, channel_id, message):
+    chat_id = message.chat.id
+    chat_member = bot.get_chat_member(
+        chat_id=int(channel_id), user_id=int(user_id)
+    )
+    if chat_member.status in ['member', 'administrator', 'creator']:
+        db.set_subscribed(user_id, chat_id, True)
+        return True
+
+    db.set_subscribed(user_id, chat_id, False)
+    show_subscribe(chat_id, user_id)
     return False
-#! Функция проверки подписки пользователя при нажатии кнопки
-def check_subscription_call(user_id, channel_id,call):
-  user_context = get_user_context(user_id)
 
-  chat_member = bot.get_chat_member(chat_id=int(channel_id), user_id=int(user_id))
-  if chat_member.status in ["member","administrator","creator"]:
-    # Пользователь подписан на канал
-    user_context.descripsion_mode = True
-    main(call)
-    return True  
-  elif chat_member.status not in ["member"]:
-    user_context.descripsion_mode = False
-    try:
-      bot.delete_message(user_context.send_book_msg.chat.id, user_context.send_book_msg.message_id)
-    except:
-      pass
-    markup = telebot.types.InlineKeyboardMarkup()
-    item = telebot.types.InlineKeyboardButton("Подписался ✅", callback_data='main')
-    markup.add(item)
-    user_context.reg = bot.send_message(call.message.chat.id,'Подпишитесь чтобы продолжить 🌐\nhttps://t.me/omfsrus',reply_markup=markup)
-    user_context.ignoreFlag = True
-    # Пользователь не подписан на канал
-    return False    
-  
-#! Функция проверки подписки пользователя для использования в коде
-def check_subscription_call_checker(user_id, channel_id):
-  user_context = get_user_context(user_id)
-  
-  chat_member = bot.get_chat_member(chat_id=int(channel_id), user_id=int(user_id))
-  if chat_member.status in ["member","administrator","creator"]:
-    user_context.descripsion_mode = True
-    return True  
-  elif chat_member.status not in ["member"]:
-    user_context.descripsion_mode = False
-    return False  
-#! Обработчик нажатия кнопки "short" (короткое название книги)
+
+def check_subscription_call(user_id, channel_id, call):
+    chat_id = call.message.chat.id
+    chat_member = bot.get_chat_member(
+        chat_id=int(channel_id), user_id=int(user_id)
+    )
+    if chat_member.status in ['member', 'administrator', 'creator']:
+        db.set_subscribed(user_id, chat_id, True)
+        show_prompt(chat_id, user_id)
+        bot.answer_callback_query(call.id, 'Подписка подтверждена ✅')
+        return True
+
+    db.set_subscribed(user_id, chat_id, False)
+    show_subscribe(chat_id, user_id)
+    bot.answer_callback_query(call.id)
+    return False
+
+
+def check_subscription_call_checker(user_id, channel_id, chat_id=None):
+    if chat_id is None:
+        user = db.get_user(user_id)
+        chat_id = user['chat_id'] if user else None
+    if chat_id is None:
+        return False
+
+    chat_member = bot.get_chat_member(
+        chat_id=int(channel_id), user_id=int(user_id)
+    )
+    if chat_member.status in ['member', 'administrator', 'creator']:
+        db.set_subscribed(user_id, chat_id, True)
+        return True
+
+    db.set_subscribed(user_id, chat_id, False)
+    return False
+
+
 @bot.callback_query_handler(func=lambda call: call.data == 'short')
 def short_book_name(call):
-  user_id = call.from_user.id
-  user_context = get_user_context(user_id)
-  # Если включен режим подписки, убираем предыдущее сообщение и отправляем запрос на ввод книги
-  if user_context.descripsion_mode is True:
-    bot.delete_message(user_context.again_msg.chat.id, user_context.again_msg.message_id)
-    user_context.send_book_msg = bot.send_message(call.message.chat.id,'Отправьте слово из названия или имени автора 📕')
-    user_context.ignoreFlag = False
-  else:
-    # Проверяем подписку пользователя
-    check_subscription_call(user_id,channel_id,call)
-    try:
-      bot.delete_message(user_context.again_msg.chat.id, user_context.again_msg.message_id)
-    except:
-      pass
-#! Обработчик нажатия кнопки "clear" (очистка ссылок)
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+
+    if is_subscribed(user_id):
+        show_prompt(chat_id, user_id)
+    else:
+        check_subscription_call(user_id, channel_id, call)
+
+
 @bot.callback_query_handler(func=lambda call: call.data == 'clear')
 def clear(call):
-  bot.answer_callback_query(call.id, 'Чистим 🧹', show_alert=True)
-  user_id = call.from_user.id
-  user_context = get_user_context(user_id)
-  for message_obj in user_context.sentBooks:
-    try:
-      bot.delete_message(call.message.chat.id, message_obj.message_id)
-    except:
-      pass
-  try:
-    bot.delete_message(user_context.finish_msg.chat.id, user_context.finish_msg.message_id)
-  except:
-    pass
-  user_context.noneFlag = False
+    bot.answer_callback_query(call.id, 'Чистим 🧹', show_alert=True)
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    delete_result_messages(user_id, chat_id)
+    show_prompt(chat_id, user_id)
 
-  main(call)
 
-# Настроим журнал логов
 logging.basicConfig(filename='myapp.log', level=logging.ERROR)
-
-# Создадим объекты для перенаправления stdout и stderr
 stderr_logger = logging.getLogger('stderr_logger')
 
-# Создадим обработчики для записи stdout и stderr в журнал
+
 class StderrLogHandler(logging.Handler):
     def emit(self, record):
         log_message = self.format(record)
         stderr_logger.error(log_message)
 
-# Добавим обработчики к объектам логирования
+
 stderr_logger.addHandler(StderrLogHandler())
 
 if __name__ == '__main__':
@@ -331,6 +325,5 @@ if __name__ == '__main__':
         try:
             bot.polling(none_stop=True)
         except Exception as e:
-            print(f"An error occurred: {e}")
-            time.sleep(1)  # Добавьте задержку перед повторной попыткой опроса
-
+            print(f'An error occurred: {e}')
+            time.sleep(1)

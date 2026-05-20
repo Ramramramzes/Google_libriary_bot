@@ -1,3 +1,52 @@
+# Секреты и учётные данные
 .env
+.env.*
+!.env.example
+*.env
 myKey.json
+*credentials*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+
+# База данных и локальные данные
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Логи
+*.log
+logs/
+
+# Docker (локальные артефакты)
+.docker/
+
+# IDE и ОС
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 .DS_Store
+Thumbs.db
+
+# Тесты и покрытие
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Сборка
+dist/
+build/
+*.egg-info/
