@@ -53,6 +53,12 @@ def init_db():
                 paid_at REAL NOT NULL
             )
         ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS bot_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        ''')
 
 
 @contextmanager
@@ -300,3 +306,46 @@ def clear_last_search_results(user_id, chat_id):
         last_search_results='[]',
         last_search_query='',
     )
+
+
+def get_meta(key, default=None):
+    with get_connection() as conn:
+        row = conn.execute(
+            'SELECT value FROM bot_meta WHERE key = ?', (key,)
+        ).fetchone()
+        return row['value'] if row else default
+
+
+def set_meta(key, value):
+    with get_connection() as conn:
+        conn.execute(
+            'INSERT INTO bot_meta (key, value) VALUES (?, ?) '
+            'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+            (key, str(value)),
+        )
+
+
+def get_maintenance_notify_targets(notify_all=False):
+    """Пользователи для уведомления о сбросе чата после деплоя."""
+    with get_connection() as conn:
+        if notify_all:
+            rows = conn.execute(
+                'SELECT user_id, chat_id FROM users WHERE chat_id IS NOT NULL'
+            ).fetchall()
+        else:
+            now = time.time()
+            rows = conn.execute(
+                '''
+                SELECT user_id, chat_id FROM users
+                WHERE chat_id IS NOT NULL
+                AND (
+                    ui_message_id IS NOT NULL
+                    OR result_message_ids != '[]'
+                    OR extra_message_ids != '[]'
+                    OR premium_until > ?
+                    OR last_button_click > ?
+                )
+                ''',
+                (now, now - 30 * 86400),
+            ).fetchall()
+        return [dict(row) for row in rows]

@@ -83,3 +83,33 @@ docker compose logs -f
 | Нет кнопки Pay / invoice | Включить Stars в @BotFather |
 | `/test_premium` не работает | Добавить свой ID в `ADMIN_USER_IDS` |
 | Лимит не срабатывает | У пользователя уже Premium (`/status`) |
+
+### 6. Рассылка «удалите чат» после обновления
+
+**Автоматически при деплое:** в `.env` задайте или увеличьте `MAINTENANCE_REVISION=1`, пересоберите бота.
+
+**Вручную (админ):** `/broadcast_reset` — всем из базы, `/broadcast_reset active` — только активным.
+
+Можно передать свой текст:
+
+- `/broadcast_reset Текст уведомления`
+- `/broadcast_reset active Текст уведомления`
+
+В логах: `Maintenance notify revision=... sent=...`
+
+### 7. Подарок Premium по ID (админ)
+
+Выдать Premium пользователю из базы:
+
+- `/gift_premium USER_ID`
+- `/gift_premium USER_ID DAYS`
+
+Пример: `/gift_premium 123456789 30`
+
+> Пользователь должен хотя бы один раз запустить бота (`/start`), чтобы его `chat_id` был в базе.
+
+### 8. Видимость команд только для админа
+
+- Обычным пользователям в меню команд показываются: `/start`, `/status`, `/premium`.
+- Админам из `ADMIN_USER_IDS` дополнительно видны: `/test_premium`, `/broadcast_reset`, `/gift_premium`.
+- Если изменили `ADMIN_USER_IDS`, перезапустите бота (`docker compose restart`), чтобы меню обновилось.

@@ -35,6 +35,21 @@ docker compose logs --tail 20
 Остановка: `docker compose down`  
 Перезапуск: `docker compose restart`
 
+## Уведомление пользователей после обновления
+
+Если после деплоя нужно попросить пользователей удалить чат и написать `/start`:
+
+1. В `.env` увеличьте `MAINTENANCE_REVISION` (например `1` → `2`).
+2. Пересоберите и перезапустите: `docker compose up -d --build`.
+
+Рассылка уйдёт **один раз** для каждого значения revision. Обычный `restart` без смены revision повторно не шлёт.
+
+- По умолчанию — всем, кто есть в базе.
+- `MAINTENANCE_NOTIFY_ALL=0` — только активным (сессия, Premium или активность за 30 дней).
+- Ручная рассылка админом: `/broadcast_reset` (всем) или `/broadcast_reset active` (только активным).
+
+Подробнее: [TESTING.md](TESTING.md)
+
 ## Данные
 
 База SQLite хранится в Docker volume `bot_data` (`/data/bot.db` в контейнере).

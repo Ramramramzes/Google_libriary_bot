@@ -9,6 +9,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import db
 import payments
+import maintenance
 
 load_dotenv()
 myToken = os.getenv('myToken')
@@ -22,6 +23,17 @@ ADMIN_USER_IDS = {
     if x.strip().isdigit()
 }
 bot = telebot.TeleBot(myToken)
+
+PUBLIC_COMMANDS = [
+    telebot.types.BotCommand('start', 'Перезапуск бота'),
+    telebot.types.BotCommand('status', 'Статус подписки и Premium'),
+    telebot.types.BotCommand('premium', 'Купить Premium'),
+]
+ADMIN_COMMANDS = PUBLIC_COMMANDS + [
+    telebot.types.BotCommand('test_premium', 'Выдать Premium себе (тест)'),
+    telebot.types.BotCommand('broadcast_reset', 'Рассылка сервисного уведомления'),
+    telebot.types.BotCommand('gift_premium', 'Подарить Premium по user_id'),
+]
 
 db.init_db()
 
@@ -156,6 +168,43 @@ def unlock_book_message(call, item, index):
 
 def is_admin(user_id):
     return user_id in ADMIN_USER_IDS
+
+
+def sync_bot_commands():
+    """Показывает админ-команды только ADMIN_USER_IDS."""
+    try:
+        bot.set_my_commands(
+            PUBLIC_COMMANDS,
+            scope=telebot.types.BotCommandScopeDefault(),
+        )
+        bot.set_my_commands(
+            PUBLIC_COMMANDS,
+            scope=telebot.types.BotCommandScopeAllPrivateChats(),
+        )
+    except Exception as exc:
+        logging.warning('set_my_commands public failed: %s', exc)
+        return
+
+    for admin_id in ADMIN_USER_IDS:
+        try:
+            bot.set_my_commands(
+                ADMIN_COMMANDS,
+                scope=telebot.types.BotCommandScopeChat(admin_id),
+            )
+        except Exception as exc:
+            logging.warning('set_my_commands admin failed admin=%s: %s', admin_id, exc)
+
+
+def sync_user_commands(user_id):
+    """Принудительно выравнивает меню команд в конкретном чате пользователя."""
+    commands = ADMIN_COMMANDS if is_admin(user_id) else PUBLIC_COMMANDS
+    try:
+        bot.set_my_commands(
+            commands,
+            scope=telebot.types.BotCommandScopeChat(user_id),
+        )
+    except Exception as exc:
+        logging.warning('set_my_commands user failed user=%s: %s', user_id, exc)
 
 
 def is_subscribed(user_id):
@@ -509,6 +558,120 @@ def cmd_test_premium(message):
     show_prompt(chat_id, user_id, force_new=True)
 
 
+@bot.message_handler(commands=['broadcast_reset'])
+def cmd_broadcast_reset(message):
+    """Рассылка «удалите чат» (только ADMIN_USER_IDS)."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    if not is_admin(user_id):
+        delete_user_message(chat_id, message.message_id)
+        return
+
+    parts = (message.text or '').split(maxsplit=2)
+    notify_all = not (len(parts) > 1 and parts[1].lower() == 'active')
+    custom_text = None
+    if len(parts) > 1 and parts[1].lower() == 'active' and len(parts) > 2:
+        custom_text = parts[2]
+    elif len(parts) > 1 and parts[1].lower() not in {'active', 'all'}:
+        custom_text = (message.text or '').split(maxsplit=1)[1]
+    elif len(parts) > 1 and parts[1].lower() == 'all' and len(parts) > 2:
+        custom_text = parts[2]
+    sent, failed, skipped = maintenance.broadcast_reset_notice(
+        bot,
+        notify_all=notify_all,
+        custom_text=custom_text,
+    )
+    reply = (
+        f'Рассылка завершена.\n'
+        f'Отправлено: {sent}\n'
+        f'Ошибок: {failed}\n'
+        f'Заблокировали бота: {skipped}'
+    )
+    bot.send_message(chat_id, reply)
+    delete_user_message(chat_id, message.message_id)
+
+
+@bot.message_handler(commands=['gift_premium'])
+def cmd_gift_premium(message):
+    """Выдать Premium пользователю по ID: /gift_premium USER_ID [DAYS]."""
+    admin_id = message.from_user.id
+    admin_chat_id = message.chat.id
+    if not is_admin(admin_id):
+        delete_user_message(admin_chat_id, message.message_id)
+        update_ui_message(
+            admin_chat_id,
+            admin_id,
+            'Команда только для администратора.',
+            force_new=True,
+        )
+        return
+
+    parts = (message.text or '').split()
+    if len(parts) < 2:
+        bot.send_message(
+            admin_chat_id,
+            'Использование: /gift_premium USER_ID [DAYS]\n'
+            'Пример: /gift_premium 123456789 30',
+        )
+        delete_user_message(admin_chat_id, message.message_id)
+        return
+
+    try:
+        target_user_id = int(parts[1])
+    except ValueError:
+        bot.send_message(admin_chat_id, 'USER_ID должен быть числом.')
+        delete_user_message(admin_chat_id, message.message_id)
+        return
+
+    days = payments.PREMIUM_DAYS
+    if len(parts) >= 3:
+        try:
+            days = int(parts[2])
+        except ValueError:
+            bot.send_message(admin_chat_id, 'DAYS должен быть числом.')
+            delete_user_message(admin_chat_id, message.message_id)
+            return
+        if days <= 0:
+            bot.send_message(admin_chat_id, 'DAYS должен быть больше 0.')
+            delete_user_message(admin_chat_id, message.message_id)
+            return
+
+    target_user = db.get_user(target_user_id)
+    if not target_user or not target_user.get('chat_id'):
+        bot.send_message(
+            admin_chat_id,
+            'Пользователь не найден в базе. '
+            'Сначала он должен открыть бота и отправить /start.',
+        )
+        delete_user_message(admin_chat_id, message.message_id)
+        return
+
+    target_chat_id = int(target_user['chat_id'])
+    db.grant_premium(target_user_id, target_chat_id, days=days)
+    updated_user = db.get_user(target_user_id) or {}
+    premium_until = float(updated_user.get('premium_until') or 0)
+    from datetime import datetime
+    until_text = datetime.fromtimestamp(premium_until).strftime('%d.%m.%Y')
+
+    try:
+        bot.send_message(
+            target_chat_id,
+            f'🎁 Вам подарили Premium на {days} дней.\n'
+            f'Активен до: {until_text}\n\n'
+            'Для продолжения отправьте /start',
+        )
+    except Exception as exc:
+        logging.warning('gift_premium notify failed user=%s: %s', target_user_id, exc)
+
+    bot.send_message(
+        admin_chat_id,
+        f'Готово ✅\n'
+        f'User ID: {target_user_id}\n'
+        f'Premium до: {until_text}',
+    )
+    delete_user_message(admin_chat_id, message.message_id)
+
+
 @bot.pre_checkout_query_handler(func=lambda q: True)
 def pre_checkout(query):
     payments.handle_pre_checkout(bot, query)
@@ -632,6 +795,7 @@ def download_book_callback(call):
 def start(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
+    sync_user_commands(user_id)
     db.upsert_user(user_id, chat_id)
     purge_all_bot_messages(user_id, chat_id)
     db.reset_session(user_id, chat_id)
@@ -888,6 +1052,8 @@ class StderrLogHandler(logging.Handler):
 stderr_logger.addHandler(StderrLogHandler())
 
 if __name__ == '__main__':
+    sync_bot_commands()
+    maintenance.run_startup_notify(bot)
     while True:
         try:
             bot.polling(none_stop=True)
